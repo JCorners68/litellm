@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 from litellm.litellm_core_utils.asyncify import asyncify
 from litellm.litellm_core_utils.prompt_templates.image_handling import async_inline_remote_media
 from litellm.llms.anthropic.common_utils import sanitize_replayed_anthropic_messages
-from litellm.llms.anthropic.experimental_pass_through.adapters.transformation import (
+from litellm.llms.anthropic.pass_through.adapters.transformation import (
     LiteLLMAnthropicMessagesAdapter,
 )
 from litellm.llms.gemini.chat.transformation import GoogleAIStudioGeminiConfig

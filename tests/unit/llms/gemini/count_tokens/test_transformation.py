@@ -10,7 +10,7 @@ import pytest
 import litellm
 from litellm import Router, acompletion
 from litellm.litellm_core_utils.prompt_templates import image_handling
-from litellm.llms.anthropic.experimental_pass_through.messages import handler as anthropic_messages_handler
+from litellm.llms.anthropic.pass_through.messages import handler as anthropic_messages_handler
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from litellm.llms.gemini.common_utils import GoogleAIStudioTokenCounter
 from litellm.llms.gemini.count_tokens.transformation import (
