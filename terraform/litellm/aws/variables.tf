@@ -788,7 +788,7 @@ variable "billing_metrics_ca_cert_pem" {
 # ---------- Collector sidecar ----------
 #
 # Opt-in offload of spend tracking from the gateway's uvicorn workers to a
-# `python -m litellm.proxy.collector` sidecar in the same Fargate task (helm's
+# `collector` component sidecar in the same Fargate task (helm's
 # `gateway.collector`). Fargate awsvpc tasks share one network namespace,
 # so the sidecar listens on loopback TCP. Disabled (the default) adds nothing
 # to the task definition.
