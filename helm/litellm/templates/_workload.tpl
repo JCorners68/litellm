@@ -92,6 +92,7 @@ spec:
               containerPort: 4000
               protocol: TCP
           env:
+            {{- include "litellm.masterKeyEnv" $ | nindent 12 }}
             {{- include "litellm.serverEnv" (dict "root" $ "component" .Values.gateway) | nindent 12 }}
             {{- if .Values.gateway.config.create }}
             - name: CONFIG_FILE_PATH
@@ -201,6 +202,7 @@ spec:
           args:
             - collector
           env:
+            {{- include "litellm.masterKeyEnv" $ | nindent 12 }}
             {{- include "litellm.serverEnv" (dict "root" $ "component" .Values.gateway) | nindent 12 }}
             {{- if .Values.gateway.config.create }}
             - name: CONFIG_FILE_PATH

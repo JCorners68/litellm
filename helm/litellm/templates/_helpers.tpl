@@ -314,6 +314,19 @@ by the controller rather than declared, so nothing there can collide.
 {{- end -}}
 
 {{/*
+LITELLM_MASTER_KEY for the app containers only. The migrations Job runs as a
+pre-install hook, before the chart's generated master key Secret exists, and
+migrations/run.py never reads the key, so the Job must not reference it.
+*/}}
+{{- define "litellm.masterKeyEnv" -}}
+- name: LITELLM_MASTER_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "litellm.masterKey.secretName" . }}
+      key: {{ .Values.masterKey.secretKey | default "master-key" }}
+{{- end -}}
+
+{{/*
 Master-key + database + redis env block — shared by gateway, backend, and the
 migrations Job.
 
@@ -354,11 +367,6 @@ IAM_TOKEN_DB_AUTH / AZURE_POSTGRESQL_AUTH toggle that only the writer sets.
 {{- define "litellm.serverEnv" -}}
 {{- $root := .root -}}
 {{- $component := .component -}}
-- name: LITELLM_MASTER_KEY
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "litellm.masterKey.secretName" $root }}
-      key: {{ $root.Values.masterKey.secretKey | default "master-key" }}
 {{- if $component.logLevel }}
 - name: LITELLM_LOG
   value: {{ $component.logLevel | quote }}
