@@ -54,7 +54,7 @@ Then point the stack at it via `image_registry`:
 
 ```hcl
 image_registry = "us-central1-docker.pkg.dev/my-gcp-project/litellm/berriai"
-image_tag      = "v1.104.0-stable"
+image_tag      = "v1.102.1"
 ```
 
 The `<image_registry>/litellm:<image_tag>` URI is composed from those two

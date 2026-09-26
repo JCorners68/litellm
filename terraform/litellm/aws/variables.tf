@@ -141,10 +141,10 @@ variable "image" {
     from the first argument (`gateway`, `backend`, `ui`, `migrations`,
     `metrics`, `collector`), so the gateway, backend, UI and migration task
     definitions and the sidecars all pull this URI. Tag must match a tag
-    actually published to GHCR (`v<semver>-stable` for releases).
+    actually published to GHCR (`v<semver>` for releases).
   EOT
   type        = string
-  default     = "ghcr.io/berriai/litellm:v1.104.0-stable"
+  default     = "ghcr.io/berriai/litellm:v1.102.1"
 }
 
 # ---------- Service sizing ----------

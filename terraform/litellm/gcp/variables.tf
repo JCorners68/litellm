@@ -143,9 +143,9 @@ variable "image_registry" {
 }
 
 variable "image_tag" {
-  description = "Tag of the LiteLLM image when composed from `image_registry`. Must match a tag actually published to GHCR (`v<semver>-stable` for releases)."
+  description = "Tag of the LiteLLM image when composed from `image_registry`. Must match a tag actually published to GHCR (`v<semver>` for releases)."
   type        = string
-  default     = "v1.104.0-stable"
+  default     = "v1.102.1"
 }
 
 variable "image" {

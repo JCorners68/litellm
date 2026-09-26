@@ -43,7 +43,7 @@ env    = "stage"
 # `module "litellm"` block in main.tf (see ../../variables.tf) if you need
 # a custom build.
 # image_registry = "us-central1-docker.pkg.dev/my-gcp-project/litellm/berriai"
-# image_tag      = "v1.104.0-stable"
+# image_tag      = "v1.102.1"
 
 # ---------- proxy_config (mirrors helm gateway.config.proxy_config) ----------
 # proxy_config = {

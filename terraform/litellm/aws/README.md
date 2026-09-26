@@ -498,7 +498,7 @@ top — set org-wide tags there, per-deployment tags via the `tags` input.
 
 ## Image pulls
 
-`image` defaults to `ghcr.io/berriai/litellm:v1.104.0-stable`, which is
+`image` defaults to `ghcr.io/berriai/litellm:v1.102.1`, which is
 anonymous-readable. The gateway, backend and UI services, the metrics and
 collector sidecars and the one-off migration task all run that one image
 and pick their process through the entrypoint's first argument, so bumping

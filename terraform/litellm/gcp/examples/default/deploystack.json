@@ -25,7 +25,7 @@
     {
       "name": "image_tag",
       "description": "Tag of the litellm image every workload (gateway, backend, ui, migrations) runs",
-      "default": "v1.104.0-stable"
+      "default": "v1.102.1"
     },
     {
       "name": "image_registry",
