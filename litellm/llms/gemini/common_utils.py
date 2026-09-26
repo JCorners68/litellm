@@ -552,26 +552,11 @@ class GoogleAIStudioTokenCounter(BaseTokenCounter):
         )
         from litellm.llms.gemini.count_tokens.transformation import (
             GeminiCountTokensPayload,
-            InvalidCountTokensRequest,
             build_count_tokens_payload,
         )
 
         if contents is None and not messages:
             return None
-
-        def failed(
-            message: str, status_code: int, original_response: dict[str, object] | None = None
-        ) -> TokenCountResponse:
-            return TokenCountResponse(
-                total_tokens=0,
-                request_model=request_model,
-                model_used=model_to_use,
-                tokenizer_type="gemini_api",
-                error=True,
-                error_message=message,
-                status_code=status_code,
-                original_response=original_response,
-            )
 
         litellm_params: Final = (deployment or {}).get("litellm_params", {})
         payload: Final = (
@@ -589,33 +574,21 @@ class GoogleAIStudioTokenCounter(BaseTokenCounter):
                 tools=None,
             )
         )
-        if isinstance(payload, InvalidCountTokensRequest):
-            return failed(payload.message, 400)
         count_tokens_params_request: Final = {
             key: copy.deepcopy(value)
             for key, value in litellm_params.items()
             if key not in ACOUNT_TOKENS_DEPLOYMENT_RESERVED_KEYS
         } | {"model": model_to_use, "contents": payload.contents}
-        try:
-            result: Final = await GoogleAIStudioTokenCounter().acount_tokens(
-                system_instruction=payload.system_instruction,
-                tools=payload.tools,
-                client=client,
-                **count_tokens_params_request,
-            )
-        except (litellm.APIError, litellm.APIConnectionError) as e:
-            return failed(e.message, e.status_code)
-        total_tokens: Final = result.get("totalTokens") if isinstance(result, dict) else None
-        if not isinstance(total_tokens, int) or isinstance(total_tokens, bool):
-            return failed(
-                "Google Gen AI Studio countTokens response has no totalTokens",
-                502,
-                result if isinstance(result, dict) else None,
-            )
+        result: Final = await GoogleAIStudioTokenCounter().acount_tokens(
+            system_instruction=payload.system_instruction,
+            tools=payload.tools,
+            client=client,
+            **count_tokens_params_request,
+        )
         return TokenCountResponse(
-            total_tokens=total_tokens,
+            total_tokens=result.get("totalTokens", 0),
             request_model=request_model,
             model_used=model_to_use,
-            tokenizer_type="gemini_api",
+            tokenizer_type=result.get("tokenizer_used", ""),
             original_response=result,
         )

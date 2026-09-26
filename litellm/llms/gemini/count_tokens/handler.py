@@ -155,8 +155,10 @@ class GoogleAIStudioTokenCounter:
             }
 
         Raises:
-            litellm.APIError: If the API returns an error status or a body that is not JSON
-            litellm.APIConnectionError: If the request fails or times out
+            ValueError: If API key is missing
+            litellm.APIError: If the API call fails
+            litellm.APIConnectionError: If the connection fails
+            Exception: For any other unexpected errors
         """
         headers, url = await self.validate_environment(
             api_key=api_key,
@@ -180,24 +182,22 @@ class GoogleAIStudioTokenCounter:
                 json=request_body,  # pyright: ignore[reportArgumentType]  # post() takes a bare dict; a TypedDict is one at runtime
             )
             response.raise_for_status()
+
+            # Parse response
+            result: Final = response.json()
+            return result
+
         except httpx.HTTPStatusError as e:
+            error_msg = f"Google Gen AI Studio API error: {e.response.status_code} - {e.response.text}"
             raise litellm.APIError(
-                message=f"Google Gen AI Studio API error: {e.response.status_code} - {e.response.text}",
+                message=error_msg,
                 llm_provider="gemini",
                 model=model,
                 status_code=e.response.status_code,
             ) from e
-        except (httpx.RequestError, litellm.Timeout) as e:
-            raise litellm.APIConnectionError(
-                message=f"Request to Google Gen AI Studio failed: {e}", llm_provider="gemini", model=model
-            ) from e
-
-        try:
-            return response.json()
-        except ValueError as e:
-            raise litellm.APIError(
-                message=f"Google Gen AI Studio API returned a non-JSON body: {response.text}",
-                llm_provider="gemini",
-                model=model,
-                status_code=502,
-            ) from e
+        except httpx.RequestError as e:
+            error_msg = f"Request to Google Gen AI Studio failed: {e}"
+            raise litellm.APIConnectionError(message=error_msg, llm_provider="gemini", model=model) from e
+        except Exception as e:
+            error_msg = f"Unexpected error during token counting: {e}"
+            raise Exception(error_msg) from e

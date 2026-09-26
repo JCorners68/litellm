@@ -31,11 +31,6 @@ class GeminiCountTokensPayload:
     tools: tuple[Tools, ...] | None
 
 
-@dataclass(frozen=True, slots=True)
-class InvalidCountTokensRequest:
-    message: str
-
-
 _ANTHROPIC_ADAPTER: Final = LiteLLMAnthropicMessagesAdapter()
 _JSON_OBJECT: Final = TypeAdapter(dict[str, object])
 _JSON_ARRAY: Final = TypeAdapter(list[object])
@@ -157,10 +152,7 @@ async def build_count_tokens_payload(
     system: object | None,
     tools: Sequence[Mapping[str, object]] | None,
     message_format: CountTokensMessageFormat,
-) -> GeminiCountTokensPayload | InvalidCountTokensRequest:
-    try:
-        if message_format == "anthropic":
-            return await _anthropic_payload(model=model, messages=messages, system=system, tools=tools)
-        return await _openai_payload(model=model, messages=messages, system=system, tools=tools)
-    except Exception as e:  # noqa: BLE001  # input the chat path cannot translate or fetch falls back to the local count
-        return InvalidCountTokensRequest(message=f"Invalid token count request: {e!r}")
+) -> GeminiCountTokensPayload:
+    if message_format == "anthropic":
+        return await _anthropic_payload(model=model, messages=messages, system=system, tools=tools)
+    return await _openai_payload(model=model, messages=messages, system=system, tools=tools)

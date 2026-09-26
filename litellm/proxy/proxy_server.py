@@ -13517,7 +13517,6 @@ async def run_thread(
 #     dependencies=[Depends(user_api_key_auth)],
 # )
 # async def get_available_routes(user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth)):
-from litellm.litellm_core_utils.token_counter import messages_with_uncountable_blocks_as_text
 from litellm.llms.base_llm.base_utils import BaseTokenCounter
 from litellm.proxy.db.routing_prisma_wrapper import WriterPinnedClient
 from litellm.repositories.config_repository import ConfigRepository
@@ -13637,8 +13636,7 @@ async def _try_provider_token_count(
                 code=result.status_code or 500,
             )
         verbose_proxy_logger.warning(
-            "Provider token counting for model %s failed (%s): %s. Falling back to local tokenizer.",
-            model_to_use,
+            "Provider token counting failed (%s): %s. Falling back to local tokenizer.",
             result.status_code,
             result.error_message,
         )
@@ -13762,8 +13760,7 @@ async def count_request_tokens(
     tokenizer_used: Final = str(_tokenizer_used["type"])
     system_message: Final = _system_message(system)
     typed_messages: Final = cast(  # cast-ok: request messages are raw chat-shaped dicts that token_counter normalizes
-        Sequence[AllMessageValues] | None,
-        None if messages is None else messages_with_uncountable_blocks_as_text(messages),
+        Sequence[AllMessageValues] | None, messages
     )
     counted_messages: Final = (
         typed_messages if typed_messages is None or system_message is None else (system_message, *typed_messages)

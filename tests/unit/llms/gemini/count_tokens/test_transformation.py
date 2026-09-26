@@ -15,7 +15,6 @@ from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from litellm.llms.gemini.common_utils import GoogleAIStudioTokenCounter
 from litellm.llms.gemini.count_tokens.transformation import (
     GeminiCountTokensPayload,
-    InvalidCountTokensRequest,
     build_count_tokens_payload,
 )
 
@@ -616,20 +615,6 @@ async def test_build_count_tokens_payload_wraps_responses_api_tool():
         "type": "object",
         "properties": {"city": {"type": "string"}},
     }
-
-
-@pytest.mark.asyncio
-async def test_build_count_tokens_payload_rejects_a_tool_result_without_its_tool_call():
-    payload = await build_count_tokens_payload(
-        model="gemini-2.5-flash",
-        messages=[{"role": "user", "content": [{"type": "tool_result", "content": "18C"}]}],
-        system=None,
-        tools=None,
-        message_format="anthropic",
-    )
-
-    assert isinstance(payload, InvalidCountTokensRequest)
-    assert "Missing corresponding tool call" in payload.message
 
 
 @pytest.mark.asyncio

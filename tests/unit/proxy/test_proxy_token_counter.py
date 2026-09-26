@@ -1302,23 +1302,6 @@ def _server_tool_history(stdout: str, encrypted_content: str) -> list[dict[str, 
     ]
 
 
-@pytest.mark.asyncio
-async def test_local_token_count_estimates_server_tool_history_without_counting_ciphertext(monkeypatch):
-    monkeypatch.setattr(litellm.proxy.proxy_server, "llm_router", None)
-
-    async def count(stdout: str, encrypted_content: str) -> int:
-        result = await token_counter(
-            request=TokenCountRequest(model="gpt-4o", messages=_server_tool_history(stdout, encrypted_content))
-        )
-        return result.total_tokens
-
-    baseline = await count("18C", "RW5jcnlwdGVk")
-
-    assert baseline > 0
-    assert await count("18C", "RW5jcnlwdGVk" * 2000) == baseline
-    assert await count("18C and sunny for the rest of the week", "RW5jcnlwdGVk") > baseline
-
-
 _GEMINI_COUNT_TOKENS_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens"
 _WEATHER_TOOL = {
     "name": "get_weather",
@@ -1372,37 +1355,3 @@ async def test_anthropic_count_tokens_route_sends_system_and_tools_to_gemini(mon
     assert [declaration["name"] for declaration in sent["tools"][0]["function_declarations"]] == ["get_weather"]
 
 
-@pytest.mark.asyncio
-async def test_anthropic_count_tokens_route_falls_back_for_array_property_without_items(monkeypatch, respx_mock):
-    monkeypatch.setattr(litellm.proxy.proxy_server, "llm_router", _gemini_router())
-    monkeypatch.setattr(litellm, "disable_aiohttp_transport", True)
-    monkeypatch.setattr(litellm, "disable_token_counter", False)
-    respx_mock.post(_GEMINI_COUNT_TOKENS_URL).mock(return_value=httpx.Response(500, json={"error": {"code": 500}}))
-    tags_tool = {
-        "name": "set_tags",
-        "description": "Set tags",
-        "input_schema": {"type": "object", "properties": {"tags": {"type": "array"}}, "required": ["tags"]},
-    }
-
-    response = await _count_through_anthropic_route(
-        monkeypatch,
-        {"model": "gemini-count", "tools": [tags_tool], "messages": [{"role": "user", "content": "tag this"}]},
-    )
-
-    assert response["input_tokens"] > 0
-
-
-@pytest.mark.asyncio
-async def test_gemini_non_json_success_body_surfaces_as_bad_gateway_when_fallback_disabled(monkeypatch, respx_mock):
-    monkeypatch.setattr(litellm.proxy.proxy_server, "llm_router", _gemini_router())
-    monkeypatch.setattr(litellm, "disable_aiohttp_transport", True)
-    monkeypatch.setattr(litellm, "disable_token_counter", True)
-    respx_mock.post(_GEMINI_COUNT_TOKENS_URL).mock(return_value=httpx.Response(200, content=b"<html>portal</html>"))
-
-    with pytest.raises(ProxyException) as exc_info:
-        await token_counter(
-            request=TokenCountRequest(model="gemini-count", messages=[{"role": "user", "content": "hi"}]),
-            call_endpoint=True,
-        )
-
-    assert exc_info.value.code == "502"
