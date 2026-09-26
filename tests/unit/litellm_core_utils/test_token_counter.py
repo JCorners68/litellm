@@ -1561,3 +1561,18 @@ def test_token_counter_uses_the_tokenizer_of_each_model_family_and_of_a_custom_t
         "custom": expected["Xenova/llama-3-tokenizer"],
         "requested": sorted(served),
     }
+
+
+def test_token_counter_counts_array_parameter_without_items():
+    messages = [{"role": "user", "content": "tag this"}]
+    tags_tool = {
+        "type": "function",
+        "function": {
+            "name": "set_tags",
+            "parameters": {"type": "object", "properties": {"tags": {"type": "array"}}, "required": ["tags"]},
+        },
+    }
+
+    assert token_counter(model="gpt-4o", messages=messages, tools=[tags_tool]) > token_counter(
+        model="gpt-4o", messages=messages
+    )
