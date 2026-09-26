@@ -4,8 +4,6 @@ import sys
 import httpx
 import pytest
 
-import litellm
-from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from litellm.llms.gemini.count_tokens.handler import GoogleAIStudioTokenCounter
 
 COUNT_TOKENS_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens"
@@ -155,16 +153,6 @@ async def test_acount_tokens_sends_generate_content_request_with_tools_only():
             "tools": [{"function_declarations": [{"name": "get_weather"}]}],
         }
     }
-
-
-def _timing_out(request: httpx.Request) -> httpx.Response:
-    raise httpx.ReadTimeout("slow upstream", request=request)
-
-
-def _litellm_handler_timing_out() -> AsyncHTTPHandler:
-    handler = AsyncHTTPHandler()
-    handler.client = httpx.AsyncClient(transport=httpx.MockTransport(_timing_out))
-    return handler
 
 
 @pytest.mark.asyncio
