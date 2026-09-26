@@ -90,6 +90,12 @@ def test_resolve_cost_discount_unclosed_bracket_matches_literally():
     assert resolve_cost_discount(config, "vertex_ai", "weirdx") is None
 
 
+def test_resolve_cost_discount_char_class_with_leading_bracket():
+    config = {"vertex_ai/a[]x]*": 0.1, "vertex_ai/ab*c*d": 0.2}
+    assert resolve_cost_discount(config, "vertex_ai", "a]q") == 0.1
+    assert resolve_cost_discount(config, "vertex_ai", "axq") == 0.1
+
+
 def test_resolve_cost_discount_glob_crosses_slash_in_model():
     config = {"bedrock/*anthropic.claude-*": 0.15, "bedrock": 0.05}
     assert resolve_cost_discount(config, "bedrock", "bedrock/us-east-1/anthropic.claude-v2:1") == 0.15
