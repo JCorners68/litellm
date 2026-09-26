@@ -21,6 +21,7 @@ from litellm.constants import (
     DEFAULT_IMAGE_HEIGHT,
     DEFAULT_IMAGE_TOKEN_COUNT,
     DEFAULT_IMAGE_WIDTH,
+    DEFAULT_MAX_RECURSE_DEPTH,
     MAX_IMAGE_URL_DOWNLOAD_SIZE_MB,
     MAX_LONG_SIDE_FOR_IMAGE_HIGH_RES,
     MAX_SHORT_SIDE_FOR_IMAGE_HIGH_RES,
@@ -1051,33 +1052,33 @@ def _format_type(props, indent):
 _INLINE_DATA_BASE64_RE: Final = re.compile(r"[A-Za-z0-9+/=_-]{16,}")
 
 
-def _elide_data_key(obj: Mapping[str, object]) -> Mapping[str, object]:
-    return {  # mutable-ok: object_hook contract returns a dict per JSON node
-        key: (
-            "<binary>"
-            if key == "data" and isinstance(value, str) and _INLINE_DATA_BASE64_RE.fullmatch(value)
-            else value
-        )
-        for key, value in obj.items()
-    }
-
-
 _OPAQUE_BLOCK_KEYS: Final = frozenset(
     {"id", "tool_use_id", "cache_control", "signature", "encrypted_content", "encrypted_index"}
 )
 
 
-def _countable_json_node(obj: Mapping[str, object]) -> Mapping[str, object]:
-    return _elide_data_key({key: value for key, value in obj.items() if key not in _OPAQUE_BLOCK_KEYS})
+def _countable_value(key: object, value: object, depth: int) -> object:
+    if key == "data" and isinstance(value, str) and _INLINE_DATA_BASE64_RE.fullmatch(value):
+        return "<binary>"
+    return _without_opaque_keys(value, depth + 1)
+
+
+def _without_opaque_keys(value: object, depth: int = 0) -> object:
+    if depth > DEFAULT_MAX_RECURSE_DEPTH:
+        return "<truncated>"
+    if isinstance(value, Mapping):
+        return {  # mutable-ok: json.dumps input
+            key: _countable_value(key, item, depth) for key, item in value.items() if key not in _OPAQUE_BLOCK_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_without_opaque_keys(item, depth + 1) for item in value]  # mutable-ok: json.dumps input
+    return value
 
 
 def _countable_leaf_block(block: object) -> object:
     if not isinstance(block, Mapping) or block.get("type") in LOCALLY_COUNTABLE_BLOCK_TYPES:
         return block
-    return {
-        "type": "text",
-        "text": json.dumps(json.loads(json.dumps(block, default=str), object_hook=_countable_json_node)),
-    }
+    return {"type": "text", "text": json.dumps(_without_opaque_keys(block), default=str)}
 
 
 def _countable_block(block: object) -> object:
