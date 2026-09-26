@@ -373,6 +373,11 @@ IAM_TOKEN_DB_AUTH / AZURE_POSTGRESQL_AUTH toggle that only the writer sets.
     secretKeyRef:
       name: {{ required "database.writer.passwordSecret.name is required" .passwordSecret.name }}
       key: {{ .passwordSecret.usernameKey | default "username" }}
+- name: DATABASE_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .passwordSecret.name }}
+      key: {{ .passwordSecret.usernameKey | default "username" }}
 - name: DATABASE_NAME
   value: {{ required "database.writer.dbname is required" .dbname | quote }}
 {{- if .schema }}

@@ -450,6 +450,33 @@ tests:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/berriai/litellm:1.104.0
 
+  - it: monolith gets the writer user under both names the proxy CLI and the componentized entrypoints read
+    set:
+      monolith.enabled: true
+    template: monolith/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            valueFrom:
+              secretKeyRef:
+                name: litellm-writer-secret
+                key: username
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: litellm-writer-secret
+                key: username
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_NAME
+            value: litellm
+
   - it: disabling every component without monolith renders no application workload
     set:
       gateway.enabled: false

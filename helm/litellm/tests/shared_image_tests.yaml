@@ -216,7 +216,7 @@ tests:
       - notExists:
           path: spec.template.spec.containers[0].command
 
-  - it: the Helm test pod checks the workload Service with the proxy health command
+  - it: the Helm test pod polls the workload Service readiness endpoint through the image entrypoint
     template: templates/tests/test-connection.yaml
     asserts:
       - isKind:
@@ -225,14 +225,25 @@ tests:
           path: metadata.annotations["helm.sh/hook"]
           value: test
       - equal:
-          path: spec.containers[0].args
+          path: spec.containers[0].env[0]
           value:
-            - proxy
-            - --health
-            - --host
-            - RELEASE-NAME-litellm-gateway
-            - --port
-            - "4000"
+            name: LITELLM_READINESS_URL
+            value: http://RELEASE-NAME-litellm-gateway:4000/health/readiness
+      - equal:
+          path: spec.containers[0].args[0]
+          value: python
+      - equal:
+          path: spec.containers[0].args[1]
+          value: -c
+      - matchRegex:
+          path: spec.containers[0].args[2]
+          pattern: LITELLM_READINESS_URL
+      - matchRegex:
+          path: spec.containers[0].args[2]
+          pattern: 'db != "connected"'
+      - matchRegex:
+          path: spec.containers[0].args[2]
+          pattern: sys\.exit\(1\)
       - notExists:
           path: spec.containers[0].command
 
@@ -242,8 +253,8 @@ tests:
     template: templates/tests/test-connection.yaml
     asserts:
       - equal:
-          path: spec.containers[0].args[3]
-          value: RELEASE-NAME-litellm
+          path: spec.containers[0].env[0].value
+          value: http://RELEASE-NAME-litellm:4000/health/readiness
 
   - it: the removed per-component image blocks are rejected by the values schema
     set:
