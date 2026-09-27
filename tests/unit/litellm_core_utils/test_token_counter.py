@@ -1622,3 +1622,24 @@ def test_uncountable_block_nesting_past_the_depth_limit_is_truncated():
     assert text.endswith('"<truncated>"' + "}" * (DEFAULT_MAX_RECURSE_DEPTH + 1))
     assert "leaf" not in text
 
+
+
+def test_uncountable_block_elides_inline_base64_data_but_keeps_plain_text_data():
+    (message,) = messages_with_uncountable_blocks_as_text(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "code_execution_tool_result",
+                        "content": {"data": "iVBORw0KGgo" * 20, "stdout": "ok", "notes": {"data": "two words"}},
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert message["content"][0]["text"] == (
+        '{"type": "code_execution_tool_result", '
+        '"content": {"data": "<binary>", "stdout": "ok", "notes": {"data": "two words"}}}'
+    )
