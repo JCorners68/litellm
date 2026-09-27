@@ -21,7 +21,6 @@ from litellm.proxy.management_endpoints.common_daily_activity import (
     raise_public,
     spend_logs_window,
 )
-from litellm.proxy.management_endpoints.team_endpoints import aggregated_date_range_error
 from litellm.proxy.management_endpoints.daily_activity_scopes import (
     AGENT_RESOLVER,
     CUSTOMER_RESOLVER,
@@ -33,6 +32,7 @@ from litellm.proxy.management_endpoints.daily_activity_scopes import (
     EntityScopeResolver,
     ResolvedScope,
 )
+from litellm.proxy.management_endpoints.team_endpoints import aggregated_date_range_error
 from litellm.proxy.management_helpers.utils import management_endpoint_wrapper
 from litellm.proxy.utils import PrismaClient, get_prisma_client_or_throw
 from litellm.repositories.daily_activity_repository import DailyActivityRepository
