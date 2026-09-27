@@ -25,8 +25,10 @@ beforeAll(() => {
 
 // Mock the networking module
 vi.mock("@/components/networking", () => ({
-  userDailyActivityCall: vi.fn(),
-  userDailyActivityAggregatedCall: vi.fn(),
+  dailyActivityAggregatedCall: vi.fn(),
+  dailyActivityKeySearchCall: vi.fn(),
+  dailyActivityModelTopKeysCall: vi.fn(),
+  dailyActivityExportCall: vi.fn(),
   gatewayDailyActivityCall: vi.fn(),
   tagListCall: vi.fn(),
 }));
@@ -157,8 +159,8 @@ vi.mock("@/app/(dashboard)/hooks/users/useUsers", () => ({
 }));
 
 describe("UsagePage", () => {
-  const mockUserDailyActivityAggregatedCall = vi.mocked(networking.userDailyActivityAggregatedCall);
-  const mockUserDailyActivityCall = vi.mocked(networking.userDailyActivityCall);
+  const mockUserDailyActivityAggregatedCall = vi.fn();
+  const mockDailyActivityAggregatedCall = vi.mocked(networking.dailyActivityAggregatedCall);
   const mockTagListCall = vi.mocked(networking.tagListCall);
   const mockGatewayDailyActivityCall = vi.mocked(networking.gatewayDailyActivityCall);
   const mockUseCustomers = vi.mocked(useCustomers);
@@ -374,7 +376,12 @@ describe("UsagePage", () => {
       error: null,
     } as any);
     mockUserDailyActivityAggregatedCall.mockClear();
-    mockUserDailyActivityCall.mockClear();
+    mockDailyActivityAggregatedCall.mockReset();
+    mockDailyActivityAggregatedCall.mockImplementation((entity: string, request: unknown) =>
+      entity === "user"
+        ? mockUserDailyActivityAggregatedCall(request)
+        : Promise.resolve({ results: [], metadata: {} }),
+    );
     mockTagListCall.mockClear();
     mockGatewayDailyActivityCall.mockClear();
     mockUserDailyActivityAggregatedCall.mockResolvedValue(mockSpendData);
@@ -924,10 +931,7 @@ describe("UsagePage", () => {
 
       // Initially called with null (global view for admin)
       expect(mockUserDailyActivityAggregatedCall).toHaveBeenCalledWith(
-        "test-token",
-        expect.any(Date),
-        expect.any(Date),
-        null,
+        expect.objectContaining({ accessToken: "test-token", entityIds: null }),
       );
     });
   });
@@ -1016,127 +1020,23 @@ describe("UsagePage", () => {
 
       await waitFor(() => {
         expect(mockUserDailyActivityAggregatedCall).toHaveBeenCalledWith(
-          "test-token",
-          expect.any(Date),
-          expect.any(Date),
-          "user-123",
+          expect.objectContaining({ accessToken: "test-token", entityIds: ["user-123"] }),
         );
       });
     });
   });
 
-  describe("aggregated endpoint fallback", () => {
-    it("should fall back to paginated calls when aggregated endpoint fails", async () => {
+  describe("aggregated endpoint failure", () => {
+    it("shows the failure alert instead of retrying other routes when the aggregated call fails", async () => {
       mockUserDailyActivityAggregatedCall.mockRejectedValue(new Error("Aggregated endpoint not available"));
-      mockUserDailyActivityCall.mockResolvedValue({
-        ...mockSpendData,
-        metadata: {
-          ...mockSpendData.metadata,
-          total_pages: 1,
-          page: 1,
-        },
-      });
 
       renderWithProviders(<UsagePage {...defaultProps} />);
 
       await waitFor(() => {
         expect(mockUserDailyActivityAggregatedCall).toHaveBeenCalled();
-        expect(mockUserDailyActivityCall).toHaveBeenCalled();
       });
-
-      // Should still render the data from the paginated fallback, which lands a render after the call
-      expect(await screen.findByText("75,000")).toBeInTheDocument();
-    });
-
-    it("should stop showing the previous range's paginated pages while a new range is in flight", async () => {
-      // Same rule as the aggregate, one fallback further down. The flag that
-      // decides whether these pages are read belongs to the range the failure
-      // happened on, or the previous range's pages reach the tile through it.
-      let releaseSecondAggregated: () => void = () => {};
-      mockUserDailyActivityAggregatedCall.mockReset();
-      mockUserDailyActivityAggregatedCall
-        .mockRejectedValueOnce(new Error("Aggregated endpoint not available"))
-        .mockImplementationOnce(
-          () =>
-            new Promise((_resolve, reject) => {
-              releaseSecondAggregated = () => reject(new Error("Aggregated endpoint not available"));
-            }),
-        );
-      mockUserDailyActivityCall.mockResolvedValue({
-        ...mockSpendData,
-        metadata: { ...mockSpendData.metadata, total_pages: 1, page: 1 },
-      });
-
-      renderWithProviders(<UsagePage {...defaultProps} />);
-      await waitFor(() => {
-        expect(screen.getAllByText("75,000").length).toBeGreaterThan(0);
-      });
-
-      await act(async () => {
-        fireEvent.click(screen.getByTestId("pick-a-different-range"));
-      });
-
-      await waitFor(() => {
-        expect(mockUserDailyActivityAggregatedCall).toHaveBeenCalledTimes(2);
-      });
-      expect(screen.queryByText("75,000")).not.toBeInTheDocument();
-
-      await act(async () => {
-        releaseSecondAggregated();
-      });
-      await waitFor(() => {
-        expect(screen.getAllByText("75,000").length).toBeGreaterThan(0);
-      });
-    });
-
-    it("should aggregate multiple pages when paginated endpoint has more than 1 page", async () => {
-      mockUserDailyActivityAggregatedCall.mockRejectedValue(new Error("Not available"));
-
-      const page1Data = {
-        results: [mockSpendData.results[0]],
-        metadata: {
-          total_spend: 60,
-          total_api_requests: 700,
-          total_successful_requests: 680,
-          total_failed_requests: 20,
-          total_tokens: 35000,
-          total_pages: 2,
-          page: 1,
-        },
-      };
-
-      const page2Data = {
-        results: [
-          {
-            ...mockSpendData.results[0],
-            date: "2025-01-02",
-          },
-        ],
-        metadata: {
-          total_spend: 65.75,
-          total_api_requests: 800,
-          total_successful_requests: 770,
-          total_failed_requests: 30,
-          total_tokens: 40000,
-          total_pages: 2,
-          page: 2,
-        },
-      };
-
-      mockUserDailyActivityCall.mockResolvedValueOnce(page1Data).mockResolvedValueOnce(page2Data);
-
-      renderWithProviders(<UsagePage {...defaultProps} />);
-
-      await waitFor(() => {
-        // Both pages should have been fetched
-        expect(mockUserDailyActivityCall).toHaveBeenCalledTimes(2);
-      });
-
-      // Verify first page call
-      expect(mockUserDailyActivityCall).toHaveBeenCalledWith("test-token", expect.any(Date), expect.any(Date), 1, null);
-
-      // Verify second page call
-      expect(mockUserDailyActivityCall).toHaveBeenCalledWith("test-token", expect.any(Date), expect.any(Date), 2, null);
+      expect(mockDailyActivityAggregatedCall.mock.calls.filter((c) => c[0] === "user")).toHaveLength(1);
+      expect(await screen.findByText(/Fetching spend data failed/)).toBeInTheDocument();
     });
   });
 

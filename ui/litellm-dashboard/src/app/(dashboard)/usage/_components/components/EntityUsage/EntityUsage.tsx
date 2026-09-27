@@ -6,7 +6,6 @@ import {
   getTopAgents,
   getTopAPIKeys,
   getTopModels,
-  type ExtendedDailyData,
   type ProviderSpendRow,
 } from "./entityUsageAggregations";
 import { buildCostBreakdownTiles, buildSummaryTiles, hasFlatCost, type SummaryTile } from "./entityUsageSummary";
@@ -17,7 +16,7 @@ import { formatNumberWithCommas } from "@/utils/dataUtils";
 import type { DateRangePickerValue } from "@/components/shared/date_picker_types";
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
-import PaginationStatusAlerts from "@/components/shared/PaginationStatusAlerts";
+import { Alert, AlertDescription } from "@/components/shared/Alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import React, { type ReactNode, useMemo, useState } from "react";
@@ -25,19 +24,16 @@ import TeamMultiSelect from "@/components/common_components/team_multi_select";
 import UserDropdown from "@/components/common_components/UserDropdown";
 import { ActivityMetrics, processActivityData } from "@/components/activity_metrics";
 import { UsageExportHeader } from "@/components/EntityUsageExport";
-import { getApiKeyTruncation, getExportBlockedReason } from "@/components/EntityUsageExport/exportBlockedReason";
+import { getApiKeyTruncation } from "@/components/UsagePage/apiKeyTruncation";
 import type { EntityType } from "@/components/EntityUsageExport/types";
-import {
-  agentDailyActivityCall,
-  customerDailyActivityCall,
-  organizationDailyActivityCall,
-  tagDailyActivityCall,
-  teamDailyActivityAggregatedCall,
-  teamDailyActivityCall,
-  userDailyActivityCall,
-} from "@/components/networking";
 import { Logo } from "@/components/molecules/logo/Logo";
-import { usePaginatedDailyActivity } from "../../hooks/usePaginatedDailyActivity";
+import { useAggregatedDailyActivity } from "../../hooks/useAggregatedDailyActivity";
+import { ENTITY_API } from "./entityFetchFns";
+import {
+  EMPTY_DAILY_ACTIVITY_METADATA,
+  toDailyData,
+  type DailyActivityRequest,
+} from "@/components/UsagePage/dailyActivityApi";
 import { EntityMetricWithMetadata } from "@/components/UsagePage/types";
 import { valueFormatterSpend } from "@/components/UsagePage/utils/value_formatters";
 import EndpointUsage from "../EndpointUsage/EndpointUsage";
@@ -62,20 +58,6 @@ interface EntityMetrics {
   metadata: Record<string, any>;
 }
 
-interface EntitySpendData {
-  results: ExtendedDailyData[];
-  metadata: {
-    total_spend: number;
-    total_flat_cost?: number;
-    total_api_requests: number;
-    total_successful_requests: number;
-    total_failed_requests: number;
-    total_tokens: number;
-    api_key_limit?: number | null;
-    total_api_keys?: number | null;
-  };
-}
-
 export interface EntityList {
   label: string;
   value: string;
@@ -92,21 +74,6 @@ interface EntityUsageProps {
   dateValue: DateRangePickerValue;
   isOrgAdmin?: boolean;
 }
-
-const ENTITY_FETCH_FNS: Record<EntityType, (...args: any[]) => Promise<any>> = {
-  tag: tagDailyActivityCall,
-  team: teamDailyActivityCall,
-  organization: organizationDailyActivityCall,
-  customer: customerDailyActivityCall,
-  agent: agentDailyActivityCall,
-  user: userDailyActivityCall,
-};
-
-// Single-shot endpoints returning the whole range in one response; entity types
-// without one fall back to page-draining the paginated endpoint.
-const ENTITY_AGGREGATED_FETCH_FNS: Partial<Record<EntityType, (...args: any[]) => Promise<any>>> = {
-  team: teamDailyActivityAggregatedCall,
-};
 
 const ENTITY_CAPABILITIES: Partial<Record<EntityType, Capability>> = {
   organization: "viewOrganizationUsage",
@@ -133,51 +100,54 @@ const EntityUsage: React.FC<EntityUsageProps> = ({
   const startTime = useMemo(() => (dateValue.from ? new Date(dateValue.from) : null), [dateValue.from]);
   const endTime = useMemo(() => (dateValue.to ? new Date(dateValue.to) : null), [dateValue.to]);
 
-  const entityFilterArg = useMemo(() => {
-    if (entityType === "user") return selectedTags.length > 0 ? selectedTags[0] : null;
-    return selectedTags.length > 0 ? selectedTags : null;
-  }, [entityType, selectedTags]);
-
-  const fetchFn = ENTITY_FETCH_FNS[entityType];
-  const aggregatedFetchFn = ENTITY_AGGREGATED_FETCH_FNS[entityType];
+  const api = ENTITY_API[entityType];
   const entityCapability = ENTITY_CAPABILITIES[entityType];
   const canViewEntity = entityCapability === undefined || hasCapability(userRole, entityCapability, isOrgAdmin);
   const showAgentBreakdown = entityType === "team" && hasCapability(userRole, "viewAgentUsage");
   const hasRequestWindow = !!accessToken && !!startTime && !!endTime;
   const enabled = hasRequestWindow && canViewEntity;
 
-  const {
-    data: spendDataRaw,
-    isFetchingMore,
-    progress,
-    cancelled,
-    failed,
-    coversRange,
-    cancel,
-  } = usePaginatedDailyActivity({
-    fetchFn,
-    args: [accessToken, startTime, endTime, entityFilterArg],
-    enabled,
-    aggregatedFetchFn,
+  const request = useMemo<DailyActivityRequest | null>(
+    () =>
+      hasRequestWindow
+        ? {
+            accessToken: accessToken as string,
+            startTime: startTime as Date,
+            endTime: endTime as Date,
+            entityIds: selectedTags.length > 0 ? selectedTags : null,
+          }
+        : null,
+    [hasRequestWindow, accessToken, startTime, endTime, selectedTags],
+  );
+
+  const { data: spendDataRaw, failed } = useAggregatedDailyActivity({
+    fetch: () => api.aggregated(request as DailyActivityRequest),
+    enabled: enabled && request !== null,
+    deps: [entityType, accessToken, startTime, endTime, selectedTags],
   });
 
-  const spendData = spendDataRaw as unknown as EntitySpendData;
+  const spendData = useMemo(
+    () => ({
+      results: toDailyData(spendDataRaw),
+      metadata: spendDataRaw.metadata ?? EMPTY_DAILY_ACTIVITY_METADATA,
+    }),
+    [spendDataRaw],
+  );
   const apiKeyTruncation = getApiKeyTruncation(spendData.metadata?.api_key_limit, spendData.metadata?.total_api_keys);
 
-  const {
-    data: agentSpendDataRaw,
-    isFetchingMore: agentIsFetchingMore,
-    progress: agentProgress,
-    cancelled: agentCancelled,
-    failed: agentFailed,
-    cancel: agentCancel,
-  } = usePaginatedDailyActivity({
-    fetchFn: agentDailyActivityCall,
-    args: [accessToken, startTime, endTime, null],
-    enabled: enabled && showAgentBreakdown,
+  const { data: agentSpendDataRaw, failed: agentFailed } = useAggregatedDailyActivity({
+    fetch: () => ENTITY_API.agent.aggregated(request as DailyActivityRequest),
+    enabled: enabled && showAgentBreakdown && request !== null,
+    deps: [accessToken, startTime, endTime, showAgentBreakdown],
   });
 
-  const agentSpendData = agentSpendDataRaw as unknown as EntitySpendData;
+  const agentSpendData = useMemo(
+    () => ({
+      results: toDailyData(agentSpendDataRaw),
+      metadata: agentSpendDataRaw.metadata ?? EMPTY_DAILY_ACTIVITY_METADATA,
+    }),
+    [agentSpendDataRaw],
+  );
 
   const modelBreakdownKey = modelViewType === "groups" ? "model_groups" : "models";
   const modelMetrics = processActivityData(spendData, modelBreakdownKey, teams || []);
@@ -652,12 +622,31 @@ const EntityUsage: React.FC<EntityUsageProps> = ({
           <div className="flex justify-end mt-2 mb-4">
             <ModelViewToggle value={modelViewType} onChange={setModelViewType} />
           </div>
-          <ActivityMetrics modelMetrics={modelMetrics} hidePromptCachingMetrics={entityType === "agent"} />
+          <ActivityMetrics
+            modelMetrics={modelMetrics}
+            hidePromptCachingMetrics={entityType === "agent"}
+            fetchTopApiKeys={
+              request ? (model) => api.modelTopKeys(request, model, modelViewType === "groups") : undefined
+            }
+          />
         </>
       ),
     },
     ...(showAgentBreakdown
-      ? [{ key: "agents", label: "Agent Activity", content: <ActivityMetrics modelMetrics={agentMetrics} /> }]
+      ? [
+          {
+            key: "agents",
+            label: "Agent Activity",
+            content: (
+              <ActivityMetrics
+                modelMetrics={agentMetrics}
+                fetchTopApiKeys={
+                  request ? (model) => ENTITY_API.agent.modelTopKeys(request, model, true) : undefined
+                }
+              />
+            ),
+          },
+        ]
       : []),
     {
       key: "keys",
@@ -667,37 +656,40 @@ const EntityUsage: React.FC<EntityUsageProps> = ({
           keyMetrics={keyMetrics}
           hidePromptCachingMetrics={entityType === "agent"}
           apiKeyTruncation={apiKeyTruncation}
+          teams={teams ?? []}
+          searchKeys={request ? (query) => api.searchKeys(request, query) : undefined}
         />
       ),
     },
     { key: "endpoints", label: "Endpoint Activity", content: <EndpointUsage userSpendData={spendData} /> },
   ];
 
-  const spendFetchState = { coversRange, cancelled, failed, apiKeyTruncation };
-
   return (
     <div style={{ width: "100%" }} className="relative">
-      <PaginationStatusAlerts
-        isFetchingMore={isFetchingMore}
-        cancelled={cancelled}
-        failed={failed}
-        progress={progress}
-        cancel={cancel}
-      />
-      {showAgentBreakdown && (
-        <PaginationStatusAlerts
-          isFetchingMore={agentIsFetchingMore}
-          cancelled={agentCancelled}
-          failed={agentFailed}
-          progress={agentProgress}
-          cancel={agentCancel}
-          subject="agent data"
-        />
+      {failed && (
+        <Alert variant="error" className="mb-2">
+          <AlertDescription className="text-inherit">
+            Fetching spend data failed, so the totals below may be empty rather than final. Reload the page to try
+            again.
+          </AlertDescription>
+        </Alert>
+      )}
+      {showAgentBreakdown && agentFailed && (
+        <Alert variant="error" className="mb-2">
+          <AlertDescription className="text-inherit">
+            Fetching agent data failed, so the totals below may be empty rather than final. Reload the page to try
+            again.
+          </AlertDescription>
+        </Alert>
       )}
       <UsageExportHeader
         dateValue={dateValue}
         entityType={entityType}
-        spendData={spendData}
+        onExport={(exportType, format) =>
+          request
+            ? api.exportRows(request, exportType, format)
+            : Promise.reject(new Error("Select a date range to export"))
+        }
         showFilters={filterSlot === undefined && entityList !== null}
         filterSlot={filterSlot}
         filterLabel={getFilterLabel(entityType)}
@@ -706,7 +698,6 @@ const EntityUsage: React.FC<EntityUsageProps> = ({
         onFiltersChange={setSelectedTags}
         filterOptions={getAllTags() || undefined}
         teams={teams || []}
-        exportBlockedReason={getExportBlockedReason(spendFetchState)}
       />
       <Tabs defaultValue={tabs[0].key}>
         <TabsList className="mt-1">

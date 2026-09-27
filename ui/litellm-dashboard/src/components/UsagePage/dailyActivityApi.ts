@@ -1,0 +1,117 @@
+import type { components } from "@/lib/http/schema";
+import type {
+  BreakdownMetrics,
+  DailyData,
+  KeyMetadata,
+  KeyMetricWithMetadata,
+  MetricWithMetadata,
+  SpendMetrics,
+} from "./types";
+
+export type DailyActivityEntity = "user" | "team" | "tag" | "organization" | "customer" | "agent";
+export type DailyActivityAggregatedResponse = components["schemas"]["SpendAnalyticsPaginatedResponse"];
+export type DailyActivityMetadata = components["schemas"]["DailySpendMetadata"];
+export type ExportType = "daily" | "daily_with_keys" | "entities"; // CONTRACT (server ExportType enum)
+export type ExportFormat = "csv" | "json";
+
+// CONTRACT: until gen:api, local interfaces. Swap to components["schemas"][...] once the schema has them.
+export interface KeyActivityRow {
+  api_key: string;
+  metrics: SpendMetrics;
+  metadata: KeyMetadata;
+}
+export interface DailyActivityKeySearchResponse {
+  api_keys: KeyActivityRow[];
+}
+export interface ModelTopKeysResponse {
+  api_keys: KeyActivityRow[];
+}
+export interface CacheLeakageKeysResponse {
+  api_keys: KeyActivityRow[];
+}
+
+export interface DailyActivityRequest {
+  accessToken: string;
+  startTime: Date;
+  endTime: Date;
+  entityIds?: readonly string[] | null; // null/undefined = all
+  excludeEntityIds?: readonly string[];
+  apiKey?: string | null;
+  model?: string | null;
+  includeCurrentUtcDay?: boolean;
+}
+
+export const EMPTY_DAILY_ACTIVITY_METADATA: DailyActivityMetadata = {
+  has_more: false,
+  page: 1,
+  total_pages: 1,
+  total_spend: 0,
+  total_flat_cost: 0,
+  total_api_requests: 0,
+  total_successful_requests: 0,
+  total_failed_requests: 0,
+  total_tokens: 0,
+  total_prompt_tokens: 0,
+  total_completion_tokens: 0,
+  total_cache_read_input_tokens: 0,
+  total_cache_creation_input_tokens: 0,
+  total_compression_saved_tokens: 0,
+  total_compression_savings_spend: 0,
+  total_prompt_caching_savings_spend: 0,
+  total_gateway_injected_caching_savings_spend: 0,
+  total_autorouter_savings_spend: 0,
+  total_response_time_ms: 0,
+  total_timed_requests: 0,
+};
+
+export const EMPTY_DAILY_ACTIVITY_RESPONSE: DailyActivityAggregatedResponse = {
+  results: [],
+  metadata: EMPTY_DAILY_ACTIVITY_METADATA,
+};
+
+// The generated schema marks every breakdown bucket optional and key metadata
+// partial; the local DailyData graph requires them. Filling the gaps in one
+// mapper is what lets every consumer keep reading the local types without a cast.
+type SchemaMetricWithMetadata = components["schemas"]["MetricWithMetadata"];
+type SchemaKeyMetricWithMetadata = components["schemas"]["KeyMetricWithMetadata"];
+
+const toKeyMetric = (entry: SchemaKeyMetricWithMetadata): KeyMetricWithMetadata => ({
+  metrics: entry.metrics,
+  metadata: {
+    key_alias: entry.metadata?.key_alias ?? null,
+    team_id: entry.metadata?.team_id ?? null,
+    user_id: entry.metadata?.user_id,
+    user_email: entry.metadata?.user_email,
+    key_exists: entry.metadata?.key_exists,
+  },
+});
+
+const toMetric = (entry: SchemaMetricWithMetadata): MetricWithMetadata => ({
+  metrics: entry.metrics,
+  metadata: entry.metadata ?? {},
+  api_key_breakdown: Object.fromEntries(
+    Object.entries(entry.api_key_breakdown ?? {}).map(([key, value]) => [key, toKeyMetric(value)]),
+  ),
+});
+
+const toMetricMap = (
+  map: { [key: string]: SchemaMetricWithMetadata } | undefined,
+): { [key: string]: MetricWithMetadata } =>
+  Object.fromEntries(Object.entries(map ?? {}).map(([key, value]) => [key, toMetric(value)]));
+
+export const toDailyData = (response: DailyActivityAggregatedResponse): DailyData[] =>
+  (response.results ?? []).map((day) => {
+    const breakdown = day.breakdown;
+    const normalized: BreakdownMetrics = {
+      models: toMetricMap(breakdown?.models),
+      model_groups: toMetricMap(breakdown?.model_groups),
+      mcp_servers: toMetricMap(breakdown?.mcp_servers),
+      providers: toMetricMap(breakdown?.providers),
+      api_keys: Object.fromEntries(
+        Object.entries(breakdown?.api_keys ?? {}).map(([key, value]) => [key, toKeyMetric(value)]),
+      ),
+      entities: toMetricMap(breakdown?.entities),
+      endpoints: toMetricMap(breakdown?.endpoints),
+    };
+    return { date: day.date, metrics: day.metrics, breakdown: normalized };
+  });

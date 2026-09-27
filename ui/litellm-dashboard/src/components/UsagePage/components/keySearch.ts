@@ -1,0 +1,36 @@
+import type { Team } from "@/components/key_team_helpers/key_list";
+import type { KeyActivityRow } from "../dailyActivityApi";
+import { formatKeyLabel } from "@/components/activity_metrics";
+import type { ModelActivityData } from "../types";
+
+/**
+ * Maps server-side key search rows into the same ModelActivityData shape the
+ * local api_keys breakdown produces, so remote rows render identically.
+ */
+export const keyActivityRowsToMetrics = (
+  rows: readonly KeyActivityRow[],
+  teams: Team[],
+): Record<string, ModelActivityData> =>
+  Object.fromEntries(
+    rows.map((row) => {
+      const metrics: ModelActivityData = {
+        label: formatKeyLabel({ metrics: row.metrics, metadata: row.metadata }, row.api_key, teams),
+        key_metadata: row.metadata,
+        total_requests: row.metrics.api_requests,
+        total_successful_requests: row.metrics.successful_requests,
+        total_failed_requests: row.metrics.failed_requests,
+        total_cache_read_input_tokens: row.metrics.cache_read_input_tokens,
+        total_cache_creation_input_tokens: row.metrics.cache_creation_input_tokens,
+        total_tokens: row.metrics.total_tokens,
+        prompt_tokens: row.metrics.prompt_tokens,
+        completion_tokens: row.metrics.completion_tokens,
+        total_spend: row.metrics.spend,
+        total_response_time_ms: row.metrics.total_response_time_ms,
+        total_timed_requests: row.metrics.timed_requests,
+        top_api_keys: [],
+        top_models: [],
+        daily_data: [],
+      };
+      return [row.api_key, metrics];
+    }),
+  );

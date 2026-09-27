@@ -1,10 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ModelActivityData } from "../types";
 import KeyActivityPanel from "./KeyActivityPanel";
 
-vi.mock("@/components/activity_metrics", () => ({
+vi.mock("@/components/activity_metrics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/activity_metrics")>()),
   ActivityMetrics: ({ modelMetrics }: { modelMetrics: Record<string, ModelActivityData> }) => (
     <ul data-testid="rendered-keys">
       {Object.keys(modelMetrics).map((hash) => (
@@ -77,5 +78,86 @@ describe("KeyActivityPanel", () => {
   it("shows no truncation note when every key is loaded", () => {
     render(<KeyActivityPanel keyMetrics={keyMetrics} />);
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
+  describe("remote search", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const remoteSearchProps = (searchKeys = vi.fn().mockResolvedValue({ api_keys: [] })) => ({
+      apiKeyTruncation: { limit: 2, total: 3000 },
+      searchKeys,
+    });
+
+    it("calls searchKeys after the debounce when the list is truncated and the query has 2+ characters", async () => {
+      const searchKeys = vi.fn().mockResolvedValue({ api_keys: [] });
+      render(<KeyActivityPanel keyMetrics={keyMetrics} {...remoteSearchProps(searchKeys)} />);
+
+      fireEvent.change(screen.getByLabelText("Search keys"), { target: { value: "al" } });
+      expect(searchKeys).not.toHaveBeenCalled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(searchKeys).toHaveBeenCalledWith("al");
+    });
+
+    it("does not call searchKeys for a one-character query or when every key is already loaded", async () => {
+      const searchKeys = vi.fn().mockResolvedValue({ api_keys: [] });
+      render(<KeyActivityPanel keyMetrics={keyMetrics} {...remoteSearchProps(searchKeys)} />);
+
+      fireEvent.change(screen.getByLabelText("Search keys"), { target: { value: "a" } });
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(searchKeys).not.toHaveBeenCalled();
+
+      render(<KeyActivityPanel keyMetrics={keyMetrics} searchKeys={searchKeys} />);
+      fireEvent.change(screen.getAllByLabelText("Search keys")[1], { target: { value: "alice" } });
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(searchKeys).not.toHaveBeenCalled();
+    });
+
+    it("renders keys the server returns that the truncated local list does not contain", async () => {
+      const searchKeys = vi.fn().mockResolvedValue({
+        api_keys: [
+          {
+            api_key: "hash-carol",
+            metrics: {
+              spend: 0.5,
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              total_tokens: 0,
+              api_requests: 0,
+              successful_requests: 0,
+              failed_requests: 0,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+            metadata: { key_alias: "carol-key", team_id: null },
+          },
+        ],
+      });
+      render(<KeyActivityPanel keyMetrics={keyMetrics} {...remoteSearchProps(searchKeys)} />);
+
+      fireEvent.change(screen.getByLabelText("Search keys"), { target: { value: "carol" } });
+      expect(screen.getByText("Searching...")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+        await Promise.resolve();
+      });
+
+      expect(searchKeys).toHaveBeenCalledWith("carol");
+      expect(screen.getByTestId("rendered-keys")).toHaveTextContent("hash-carol");
+    });
   });
 });

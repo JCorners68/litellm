@@ -12,7 +12,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { BarChart } from "@/components/shared/charts";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/shared/Alert";
-import PaginationStatusAlerts from "@/components/shared/PaginationStatusAlerts";
 import { Button } from "@/components/ui/button";
 import { Card as ShadcnCard, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,23 +29,23 @@ import { ActivityMetrics, processActivityData } from "@/components/activity_metr
 import CloudZeroExportModal from "@/components/cloudzero_export_modal";
 import UserDropdown from "@/components/common_components/UserDropdown";
 import EntityUsageExportModal from "@/components/EntityUsageExport";
-import { getApiKeyTruncation, getExportBlockedReason } from "@/components/EntityUsageExport/exportBlockedReason";
+import { getApiKeyTruncation } from "@/components/UsagePage/apiKeyTruncation";
 import KeyActivityPanel from "@/components/UsagePage/components/KeyActivityPanel";
 import { Team } from "@/components/key_team_helpers/key_list";
-import {
-  gatewayDailyActivityCall,
-  Organization,
-  tagListCall,
-  userDailyActivityAggregatedCall,
-  userDailyActivityCall,
-} from "@/components/networking";
+import { gatewayDailyActivityCall, Organization, tagListCall } from "@/components/networking";
 import AdvancedDatePicker from "@/components/shared/advanced_date_picker";
 import { ChartLoader } from "@/components/shared/chart_loader";
 import { Tag } from "@/components/tag_management/types";
 import UserAgentActivity from "@/components/user_agent_activity";
 import ViewUserSpend from "@/components/view_user_spend";
-import { usePaginatedDailyActivity } from "../hooks/usePaginatedDailyActivity";
-import { DailyData, MetricWithMetadata } from "@/components/UsagePage/types";
+import { useAggregatedDailyActivity } from "../hooks/useAggregatedDailyActivity";
+import { ENTITY_API } from "./EntityUsage/entityFetchFns";
+import {
+  EMPTY_DAILY_ACTIVITY_METADATA,
+  toDailyData,
+  type DailyActivityRequest,
+} from "@/components/UsagePage/dailyActivityApi";
+import { MetricWithMetadata } from "@/components/UsagePage/types";
 import { valueFormatterSpend } from "@/components/UsagePage/utils/value_formatters";
 import {
   fetchedRangeKey,
@@ -74,16 +73,6 @@ interface UsagePageProps {
 
 const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
   const { accessToken, userRole, userId: userID, premiumUser } = useAuthorized();
-  // Aggregated endpoint: try first, fall back to paginated if unavailable
-  const [aggregatedData, setAggregatedData] = useState<FetchedForRange<{
-    results: DailyData[];
-    metadata: any;
-  }> | null>(null);
-  // Stamped like the data itself: the flag decides whether the paginated
-  // fallback is read, and a flag left over from the previous range would let
-  // that fallback's own leftover rows through.
-  const [aggregatedFailure, setAggregatedFailure] = useState<FetchedForRange<true> | null>(null);
-  const [aggregatedLoading, setAggregatedLoading] = useState(false);
   const [gatewayActivityData, setGatewayActivityData] = useState<FetchedGatewayActivity | null>(null);
 
   // Separate loading states for better UX
@@ -181,30 +170,30 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
   // can paint them. One source is not enough, since the tiles read the gateway
   // counts, fall through to the aggregate, and fall through again to the
   // paginated pages, so a stamp on any one of them is escaped by the next.
-  const currentAggregatedRangeKey = fetchedRangeKey(startTime, endTime, effectiveUserId);
   const currentGatewayRangeKey = fetchedRangeKey(startTime, endTime);
 
-  // Try aggregated endpoint first, fall back to paginated on failure
-  const aggregatedFetchIdRef = useRef(0);
-  useEffect(() => {
-    if (!accessToken || !startTime || !endTime) return;
-    const fetchId = ++aggregatedFetchIdRef.current;
-    const rangeKey = currentAggregatedRangeKey;
-    setAggregatedLoading(true);
+  const dailyActivityRequest = useMemo<DailyActivityRequest | null>(
+    () =>
+      accessToken && startTime && endTime
+        ? {
+            accessToken,
+            startTime,
+            endTime,
+            entityIds: effectiveUserId ? [effectiveUserId] : null,
+          }
+        : null,
+    [accessToken, startTime, endTime, effectiveUserId],
+  );
 
-    userDailyActivityAggregatedCall(accessToken, startTime, endTime, effectiveUserId)
-      .then((data) => {
-        if (aggregatedFetchIdRef.current !== fetchId) return;
-        setAggregatedData({ rangeKey, value: data });
-        setAggregatedLoading(false);
-        setIsDateChanging(false);
-      })
-      .catch(() => {
-        if (aggregatedFetchIdRef.current !== fetchId) return;
-        setAggregatedFailure({ rangeKey, value: true });
-        setAggregatedLoading(false);
-      });
-  }, [accessToken, startTime, endTime, effectiveUserId, currentAggregatedRangeKey]);
+  const {
+    data: aggregatedRaw,
+    loading: aggregatedLoading,
+    failed: aggregatedFailed,
+  } = useAggregatedDailyActivity({
+    fetch: () => ENTITY_API.user.aggregated(dailyActivityRequest as DailyActivityRequest),
+    enabled: dailyActivityRequest !== null,
+    deps: [accessToken, startTime, endTime, effectiveUserId],
+  });
 
   // Gateway request counts (SGR). Admin-only: the source table is
   // deployment-wide, so a non-admin must not see it.
@@ -228,47 +217,28 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
   }, [isAdmin, gatewayRequest, currentGatewayRangeKey]);
 
   const gatewayActivity = selectGatewayActivity(isAdmin, gatewayActivityData, currentGatewayRangeKey);
-  const activeAggregated = selectForRange(aggregatedData, currentAggregatedRangeKey);
-  // A failure belongs to the range it happened on. Reading it through the same
-  // rule keeps the paginated hook disabled while a new range is in flight, and
-  // disabled is what empties it, so its previous rows never reach a tile.
-  const aggregatedFailed = selectForRange(aggregatedFailure, currentAggregatedRangeKey) === true;
 
-  // Paginated fallback — only enabled when aggregated endpoint fails
-  const paginatedResult = usePaginatedDailyActivity({
-    fetchFn: userDailyActivityCall,
-    args: [accessToken, startTime, endTime, effectiveUserId],
-    enabled: aggregatedFailed && !!accessToken && !!startTime && !!endTime,
-  });
+  const userSpendData = useMemo(
+    () => ({
+      results: toDailyData(aggregatedRaw),
+      metadata: aggregatedRaw.metadata ?? EMPTY_DAILY_ACTIVITY_METADATA,
+    }),
+    [aggregatedRaw],
+  );
 
-  // Derive userSpendData from whichever source is active
-  const userSpendData = useMemo(() => {
-    if (activeAggregated) return activeAggregated;
-    if (aggregatedFailed) return paginatedResult.data;
-    return { results: [] as DailyData[], metadata: {} as any };
-  }, [activeAggregated, aggregatedFailed, paginatedResult.data]);
+  const loading = aggregatedLoading;
 
-  const loading = aggregatedLoading || paginatedResult.loading;
+  const apiKeyTruncation = getApiKeyTruncation(
+    userSpendData.metadata?.api_key_limit,
+    userSpendData.metadata?.total_api_keys,
+  );
 
-  // Read through the same range stamp as the tiles, so the export is blocked from the first
-  // render of a new range rather than from whenever the fetch effect gets around to running.
-  const spendFetchState = {
-    coversRange: activeAggregated !== null || paginatedResult.coversRange,
-    cancelled: paginatedResult.cancelled,
-    failed: paginatedResult.failed,
-    apiKeyTruncation: getApiKeyTruncation(
-      userSpendData.metadata?.api_key_limit,
-      userSpendData.metadata?.total_api_keys,
-    ),
-  };
-  const exportBlockedReason = getExportBlockedReason(spendFetchState);
-
-  // Clear isDateChanging when paginated data starts arriving
+  // Clear isDateChanging once the range finishes loading
   useEffect(() => {
-    if (aggregatedFailed && !paginatedResult.loading && paginatedResult.data.results.length > 0) {
+    if (!loading) {
       setIsDateChanging(false);
     }
-  }, [aggregatedFailed, paginatedResult.loading, paginatedResult.data.results.length]);
+  }, [loading]);
 
   // Super responsive date change handler
   const handleDateChange = useCallback((newValue: DateRangePickerValue) => {
@@ -457,13 +427,14 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
             />
             <AdvancedDatePicker value={dateValue} onValueChange={handleDateChange} />
           </div>
-          <PaginationStatusAlerts
-            isFetchingMore={paginatedResult.isFetchingMore}
-            cancelled={paginatedResult.cancelled}
-            failed={paginatedResult.failed}
-            progress={paginatedResult.progress}
-            cancel={paginatedResult.cancel}
-          />
+          {aggregatedFailed && (
+            <Alert variant="error" className="mb-2">
+              <AlertDescription className="text-inherit">
+                Fetching spend data failed, so the totals below may be empty rather than final. Reload the page to
+                try again.
+              </AlertDescription>
+            </Alert>
+          )}
           {/* Your Usage / Global Usage Panel */}
           {(usageView === "global" || usageView === "my-usage") && (
             <>
@@ -497,16 +468,10 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
                       <Sparkles />
                       Ask AI
                     </Button>
-                    <span title={exportBlockedReason}>
-                      <Button
-                        variant="outline"
-                        disabled={exportBlockedReason !== undefined}
-                        onClick={() => setIsGlobalExportModalOpen(true)}
-                      >
-                        <Download />
-                        Export Data
-                      </Button>
-                    </span>
+                    <Button variant="outline" onClick={() => setIsGlobalExportModalOpen(true)}>
+                      <Download />
+                      Export Data
+                    </Button>
                   </div>
                 </div>
                 {/* Cost Panel */}
@@ -862,10 +827,25 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
                   <div className="flex justify-end mt-2 mb-4">
                     <ModelViewToggle value={modelViewType} onChange={setModelViewType} />
                   </div>
-                  <ActivityMetrics modelMetrics={modelMetrics} />
+                  <ActivityMetrics
+                    modelMetrics={modelMetrics}
+                    fetchTopApiKeys={
+                      dailyActivityRequest
+                        ? (model) =>
+                            ENTITY_API.user.modelTopKeys(dailyActivityRequest, model, modelViewType === "groups")
+                        : undefined
+                    }
+                  />
                 </TabsContent>
                 <TabsContent value="keys" keepMounted>
-                  <KeyActivityPanel keyMetrics={keyMetrics} apiKeyTruncation={spendFetchState.apiKeyTruncation} />
+                  <KeyActivityPanel
+                    keyMetrics={keyMetrics}
+                    apiKeyTruncation={apiKeyTruncation}
+                    teams={teams}
+                    searchKeys={
+                      dailyActivityRequest ? (query) => ENTITY_API.user.searchKeys(dailyActivityRequest, query) : undefined
+                    }
+                  />
                 </TabsContent>
                 <TabsContent value="mcp" keepMounted>
                   <ActivityMetrics modelMetrics={mcpServerMetrics} />
@@ -1008,11 +988,12 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
       <EntityUsageExportModal
         isOpen={isGlobalExportModalOpen}
         onClose={() => setIsGlobalExportModalOpen(false)}
-        entityType="team"
-        spendData={{
-          results: userSpendData.results,
-          metadata: userSpendData.metadata,
-        }}
+        entityType="user"
+        onExport={(exportType, format) =>
+          dailyActivityRequest
+            ? ENTITY_API.user.exportRows(dailyActivityRequest, exportType, format)
+            : Promise.reject(new Error("Missing access token or date range"))
+        }
         dateRange={dateValue}
         selectedFilters={[]}
         customTitle="Export Usage Data"

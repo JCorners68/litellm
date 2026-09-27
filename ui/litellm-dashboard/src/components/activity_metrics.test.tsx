@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ActivityMetrics, formatKeyLabel, processActivityData, ResponseTimeTooltip } from "./activity_metrics";
@@ -244,73 +244,59 @@ describe("ActivityMetrics", () => {
     expect(tokenElements.length).toBeGreaterThan(0);
   });
 
-  it("should not display Top Virtual Keys section when model has no top_api_keys", () => {
+  it("only fetches top keys for sections that have been expanded", async () => {
+    const fetchTopApiKeys = vi.fn().mockResolvedValue({
+      api_keys: [
+        {
+          api_key: "key-123",
+          metrics: { ...EMPTY_SPEND_METRICS, spend: 50.25, api_requests: 25, total_tokens: 12500 },
+          metadata: { key_alias: "Test Key", team_id: "team1" },
+        },
+      ],
+    });
+    render(
+      <ActivityMetrics
+        modelMetrics={{
+          "gpt-4": { ...mockModelMetrics["gpt-4"], total_spend: 100 },
+          "gpt-3.5": { ...GPT_35_MODEL_DATA, total_spend: 10 },
+        }}
+        fetchTopApiKeys={fetchTopApiKeys}
+      />,
+    );
+
+    // Only the highest-spend section is expanded initially, so only its fetch fires.
+    expect(await screen.findAllByText("Test Key")).toHaveLength(1);
+    expect(fetchTopApiKeys).toHaveBeenCalledTimes(1);
+    expect(fetchTopApiKeys).toHaveBeenCalledWith("gpt-4");
+
+    fireEvent.click(screen.getAllByText("GPT-3.5")[0]);
+
+    await waitFor(() => expect(fetchTopApiKeys).toHaveBeenCalledWith("gpt-3.5"));
+    expect(await screen.findAllByText("Test Key")).toHaveLength(2);
+    expect(fetchTopApiKeys).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders the keys the model_top_keys route returns", async () => {
+    const fetchTopApiKeys = vi.fn().mockResolvedValue({
+      api_keys: [
+        {
+          api_key: "key-123",
+          metrics: { ...EMPTY_SPEND_METRICS, spend: 50.25, api_requests: 25, total_tokens: 12500 },
+          metadata: { key_alias: "Test Key", team_id: "team1" },
+        },
+      ],
+    });
+    render(<ActivityMetrics modelMetrics={mockModelMetrics} fetchTopApiKeys={fetchTopApiKeys} />);
+
+    expect(await screen.findByText("Top Virtual Keys by Spend")).toBeInTheDocument();
+    expect(await screen.findByText("Test Key")).toBeInTheDocument();
+    expect(screen.getByText(/Team: team1/)).toBeInTheDocument();
+    expect(fetchTopApiKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the top keys section without a fetcher", () => {
     render(<ActivityMetrics modelMetrics={mockModelMetrics} />);
     expect(screen.queryByText("Top Virtual Keys by Spend")).not.toBeInTheDocument();
-  });
-
-  it("should display top API keys section when present", () => {
-    const modelWithTopKeys: Record<string, ModelActivityData> = {
-      "gpt-4": {
-        ...mockModelMetrics["gpt-4"],
-        top_api_keys: [
-          {
-            api_key: "key-123",
-            key_alias: "Test Key",
-            team_id: "team1",
-            spend: 50.25,
-            requests: 25,
-            tokens: 12500,
-          },
-        ],
-      },
-    };
-
-    render(<ActivityMetrics modelMetrics={modelWithTopKeys} />);
-    expect(screen.getByText("Top Virtual Keys by Spend")).toBeInTheDocument();
-    expect(screen.getByText("Test Key")).toBeInTheDocument();
-  });
-
-  it("should display API key hash when alias is missing", () => {
-    const modelWithTopKeys: Record<string, ModelActivityData> = {
-      "gpt-4": {
-        ...mockModelMetrics["gpt-4"],
-        top_api_keys: [
-          {
-            api_key: "key-1234567890",
-            key_alias: null,
-            team_id: null,
-            spend: 50.25,
-            requests: 25,
-            tokens: 12500,
-          },
-        ],
-      },
-    };
-
-    render(<ActivityMetrics modelMetrics={modelWithTopKeys} />);
-    expect(screen.getByText(/key-123456/)).toBeInTheDocument();
-  });
-
-  it("should display team information for top API keys", () => {
-    const modelWithTopKeys: Record<string, ModelActivityData> = {
-      "gpt-4": {
-        ...mockModelMetrics["gpt-4"],
-        top_api_keys: [
-          {
-            api_key: "key-123",
-            key_alias: "Test Key",
-            team_id: "team1",
-            spend: 50.25,
-            requests: 25,
-            tokens: 12500,
-          },
-        ],
-      },
-    };
-
-    render(<ActivityMetrics modelMetrics={modelWithTopKeys} />);
-    expect(screen.getByText(/Team: team1/)).toBeInTheDocument();
   });
 
   it("should display Model Usage when model has top_models", () => {
@@ -773,8 +759,7 @@ describe("processActivityData", () => {
     expect(Object.keys(result).sort()).toEqual(["gpt-5.2", "gpt-5.2-eu"]);
     expect(result["gpt-5.2-eu"].label).toBe("gpt-5.2-eu");
     expect(result["gpt-5.2-eu"].total_spend).toBe(7);
-    expect(result["gpt-5.2-eu"].top_api_keys).toHaveLength(1);
-    expect(result["gpt-5.2-eu"].top_api_keys[0].key_alias).toBe("eu-key");
+    expect(result["gpt-5.2-eu"].top_api_keys).toEqual([]);
     expect(result["gpt-5.2"].total_spend).toBe(3);
     expect(result["gpt-5.2"].total_requests).toBe(3);
   });
@@ -1090,13 +1075,10 @@ describe("processActivityData", () => {
 
     const result = processActivityData(dailyActivityWithBreakdown, "models");
 
-    expect(result["gpt-4"].top_api_keys).toHaveLength(2);
-    expect(result["gpt-4"].top_api_keys[0].spend).toBe(60.0);
-    expect(result["gpt-4"].top_api_keys[0].api_key).toBe("key-1");
-    expect(result["gpt-4"].top_api_keys[1].spend).toBe(40.5);
+    expect(result["gpt-4"].top_api_keys).toEqual([]);
   });
 
-  it("should limit top_api_keys to 5 entries", () => {
+  it("keeps top_api_keys empty even when many keys appear in the breakdown, since top keys come from a dedicated route", () => {
     const dailyActivityWithManyKeys: { results: DailyData[] } = {
       results: [
         {
@@ -1227,9 +1209,7 @@ describe("processActivityData", () => {
 
     const result = processActivityData(dailyActivityWithManyKeys, "models");
 
-    expect(result["gpt-4"].top_api_keys).toHaveLength(5);
-    expect(result["gpt-4"].top_api_keys[0].spend).toBe(20.0);
-    expect(result["gpt-4"].top_api_keys[4].spend).toBe(16.0);
+    expect(result["gpt-4"].top_api_keys).toEqual([]);
   });
 
   it("should return empty object when results array is empty", () => {
