@@ -291,7 +291,7 @@ class RedisBatch:
         retries: list[Awaitable[None]] = []  # mutable-ok: collected while slicing replies
         offset = 0
         for op, width in zip(ops, widths):
-            retry: Final = op.settle(replies[offset : offset + width])
+            retry = op.settle(replies[offset : offset + width])
             offset += width
             if retry is not None:
                 retries.append(retry)
@@ -303,10 +303,12 @@ class RequestRedisBatches:
     """One ``RedisBatch`` per Redis backend for the current request, so readers of different caches that
     share a server still share the pipeline when they share the ``RedisCache`` instance."""
 
-    __slots__ = ("_batches",)
+    __slots__ = ("_batches", "prefetched")
 
     def __init__(self) -> None:
         self._batches: Final[dict[int, RedisBatch]] = {}  # mutable-ok: lazily filled per backend
+        # Reads declared early for a consumer that runs later in the request, keyed by consumer name.
+        self.prefetched: Final[dict[str, object]] = {}  # mutable-ok: armed pre-admission, taken at use
 
     def batch(self, redis_cache: RedisCache) -> RedisBatch:
         batch = self._batches.get(id(redis_cache))
@@ -331,6 +333,10 @@ def active_request_redis_batch(redis_cache: RedisCache) -> RedisBatch | None:
     if batches is None:
         return None
     return batches.batch(redis_cache)
+
+
+def active_request_redis_batches() -> RequestRedisBatches | None:
+    return _active_request_batches.get()
 
 
 class request_redis_batch_scope:

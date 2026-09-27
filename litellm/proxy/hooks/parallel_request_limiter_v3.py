@@ -30,6 +30,7 @@ from typing_extensions import NotRequired, ReadOnly
 
 from litellm import DualCache
 from litellm._logging import verbose_proxy_logger
+from litellm.caching.redis_batch import BatchResult, RegisteredScript, active_request_redis_batch
 from litellm.caching.redis_cache import log_redis_failure
 from litellm.constants import DYNAMIC_RATE_LIMIT_ERROR_THRESHOLD_PER_MINUTE, INTERNAL_CALL_ORIGIN_METADATA_KEY
 from litellm.integrations.custom_logger import CustomLogger
@@ -430,6 +431,19 @@ PARALLEL_REQUEST_SLOT_TTL_SECONDS: Final = 3600
 CacheCounterValue: TypeAlias = int | float | str | bytes
 
 CacheCounterValues: TypeAlias = Sequence[CacheCounterValue | None]
+
+
+def _as_counter_values(reply: object) -> list[CacheCounterValue]:
+    """A Lua reply read back off the pipeline is the same array the script returns when called directly."""
+    if not isinstance(reply, (list, tuple)):
+        raise TypeError(f"rate limiter script reply is not a list: {type(reply).__name__}")
+    values: Final[list[CacheCounterValue]] = []
+    for value in reply:  # pyright: ignore[reportUnknownVariableType]  # raw Redis reply
+        if not isinstance(value, (int, float, str, bytes)):
+            raise TypeError(f"rate limiter script reply holds {type(value).__name__}")  # pyright: ignore[reportUnknownArgumentType]
+        values.append(value)
+    return values
+
 
 ReservationWindowIdentity: TypeAlias = tuple[str, str, Literal["redis", "local"]]
 
@@ -1263,6 +1277,21 @@ class _PROXY_MaxParallelRequestsHandler_v3(CustomLogger):
         crc: Final = binascii.crc_hqx(key.encode("utf-8"), 0)
         return crc % REDIS_CLUSTER_SLOTS
 
+    def _pipeline_scripts(
+        self,
+        source: str,
+        run: RegisteredScript,
+        calls: Sequence[tuple[Sequence[str], Sequence[int]]],
+    ) -> list[BatchResult[object] | None]:
+        """Declare one Lua call per group on the request's Redis batch, so all groups share one round trip.
+        Returns ``None`` per call when no batch is open (or there is a single call), and the caller runs the
+        script directly as before."""
+        redis_cache: Final = self.internal_usage_cache.dual_cache.redis_cache
+        batch: Final = None if redis_cache is None or len(calls) < 2 else active_request_redis_batch(redis_cache)
+        if batch is None:
+            return [None] * len(calls)
+        return [batch.script(source, run, keys, args) for keys, args in calls]
+
     def _group_keys_by_hash_tag(self, keys: list[str]) -> dict[str, list[str]]:
         """
         Group keys by their Redis hash tag to ensure cluster compatibility.
@@ -1332,12 +1361,19 @@ class _PROXY_MaxParallelRequestsHandler_v3(CustomLogger):
 
         key_groups: Final = self._group_keys_by_hash_tag(keys_to_fetch)
         all_cache_values: Final[list[CacheCounterValue | None]] = []
+        args: Final[list[int]] = [now_int, self.window_size]
+        pipelined: Final = self._pipeline_scripts(
+            BATCH_RATE_LIMITER_SCRIPT,
+            self.batch_rate_limiter_script,
+            [(group_keys, args) for group_keys in key_groups.values()],
+        )
 
-        for hash_tag, group_keys in key_groups.items():
+        for (hash_tag, group_keys), group_result in zip(key_groups.items(), pipelined):
             try:
-                group_cache_values: CacheCounterValues = await self.batch_rate_limiter_script(
-                    keys=group_keys,
-                    args=[now_int, self.window_size],  # Use integer timestamp
+                group_cache_values: CacheCounterValues = (
+                    await self.batch_rate_limiter_script(keys=group_keys, args=args)
+                    if group_result is None
+                    else _as_counter_values(await group_result)
                 )
                 all_cache_values.extend(group_cache_values)
             except Exception as e:
@@ -1946,11 +1982,22 @@ class _PROXY_MaxParallelRequestsHandler_v3(CustomLogger):
         reservation_windows: Final[set[ReservationWindowIdentity]] = set()  # mutable-ok: filled by the group loop
         raw: list[CacheCounterValue]
 
-        for _idx, (keys, args, meta) in enumerate(descriptor_groups):
+        # Every descriptor's Lua call goes out in one pipeline when the request has a Redis batch open;
+        # each group still resolves and fails on its own, so the refund and fallback paths below are unchanged.
+        pipelined: Final = self._pipeline_scripts(
+            CHECK_AND_INCREMENT_BY_N_SCRIPT,
+            self.check_and_increment_by_n_script,  # pyright: ignore[reportArgumentType]  # sole caller guards it is not None
+            [(keys, args) for keys, args, _meta in descriptor_groups],
+        )
+        for (keys, args, meta), group_result in zip(descriptor_groups, pipelined):
             try:
-                raw = await self.check_and_increment_by_n_script(  # pyright: ignore[reportOptionalCall]  # sole caller guards it is not None
-                    keys=keys,
-                    args=args,
+                raw = (
+                    await self.check_and_increment_by_n_script(  # pyright: ignore[reportOptionalCall]  # sole caller guards it is not None
+                        keys=keys,
+                        args=args,
+                    )
+                    if group_result is None
+                    else _as_counter_values(await group_result)
                 )
             except Exception as e:
                 # Lua failure (timeout, OOM, network partition) leaves Redis
