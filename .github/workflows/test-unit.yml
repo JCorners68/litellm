@@ -108,6 +108,7 @@ jobs:
             artifact-name: misc
             test-path: >-
               tests/test_litellm/test_*.py
+              tests/test_litellm/repositories
             unit-flag: misc
             workers: 2
             reruns: 2

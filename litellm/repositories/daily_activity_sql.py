@@ -167,7 +167,7 @@ def build_aggregated_sql(scope: DailyActivityScope, *, global_rollup_through: st
     sentinel_param: Final = f"${len(where_params) + 1}"
     marker_param: Final = None if global_rollup_through is None else f"${len(where_params) + 2}"
     top_keys_limit: Final = constants.USAGE_TOP_API_KEYS_LIMIT
-    _bounded_limit(top_keys_limit)
+    _bounded_limit(top_keys_limit, minimum=0)
     top_keys_limit_param: Final = len(where_params) + (3 if global_rollup_through is not None else 2)
     metric_select: Final = _rollup_metric_select(scope.table)
     sql: Final = f"""
@@ -265,9 +265,9 @@ def _key_spend_select() -> str:
             COALESCE(SUM(cache_creation_input_tokens), 0)::bigint AS cache_creation_input_tokens"""
 
 
-def _bounded_limit(limit: int) -> None:
-    if limit < 1:
-        raise ValueError("limit must be at least 1")
+def _bounded_limit(limit: int, *, minimum: int = 1) -> None:
+    if limit < minimum:
+        raise ValueError(f"limit must be at least {minimum}")
 
 
 def build_key_search_sql(scope: DailyActivityScope, *, search: str, limit: int) -> SqlQuery:
@@ -415,10 +415,18 @@ def _export_grouping(export_type: ExportType) -> tuple[str, str, str, tuple[str,
             return (
                 "scoped.api_key",
                 "NULLIF(scoped.api_key, '')",
-                "MAX(vt.key_alias) AS key_alias, MAX(vt.user_id) AS user_id, MAX(u.user_email) AS user_email",
+                "MAX(COALESCE(vt.key_alias, dvt.key_alias)) AS key_alias, "
+                "MAX(COALESCE(vt.user_id, dvt.user_id)) AS user_id, MAX(u.user_email) AS user_email",
                 (
                     'LEFT JOIN "LiteLLM_VerificationToken" vt ON vt.token = scoped.api_key',
-                    'LEFT JOIN "LiteLLM_UserTable" u ON u.user_id = vt.user_id',
+                    """LEFT JOIN LATERAL (
+                        SELECT key_alias, user_id
+                        FROM "LiteLLM_DeletedVerificationToken"
+                        WHERE token = scoped.api_key
+                        ORDER BY deleted_at DESC
+                        LIMIT 1
+                    ) dvt ON vt.token IS NULL""",
+                    'LEFT JOIN "LiteLLM_UserTable" u ON u.user_id = COALESCE(vt.user_id, dvt.user_id)',
                 ),
             )
         case ExportType.DAILY_WITH_MODELS:
@@ -430,12 +438,20 @@ def _export_grouping(export_type: ExportType) -> tuple[str, str, str, tuple[str,
             )
         case ExportType.DAILY_WITH_USERS:
             return (
-                "COALESCE(vt.user_id, '')",
+                "COALESCE(vt.user_id, dvt.user_id, '')",
                 "NULL::text",
-                "NULL::text AS key_alias, MAX(vt.user_id) AS user_id, MAX(u.user_email) AS user_email",
+                "NULL::text AS key_alias, MAX(COALESCE(vt.user_id, dvt.user_id)) AS user_id, "
+                "MAX(u.user_email) AS user_email",
                 (
                     'LEFT JOIN "LiteLLM_VerificationToken" vt ON vt.token = scoped.api_key',
-                    'LEFT JOIN "LiteLLM_UserTable" u ON u.user_id = vt.user_id',
+                    """LEFT JOIN LATERAL (
+                        SELECT key_alias, user_id
+                        FROM "LiteLLM_DeletedVerificationToken"
+                        WHERE token = scoped.api_key
+                        ORDER BY deleted_at DESC
+                        LIMIT 1
+                    ) dvt ON vt.token IS NULL""",
+                    'LEFT JOIN "LiteLLM_UserTable" u ON u.user_id = COALESCE(vt.user_id, dvt.user_id)',
                 ),
             )
 

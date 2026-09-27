@@ -210,11 +210,7 @@ class DailyActivityRepository:
             cursor = _next_export_cursor(batch, export_type)
 
     async def _active_token_rows(self, values: tuple[str, ...]) -> tuple[_VerificationTokenRow, ...]:
-        try:
-            return await find_many_in(self._prisma_client.db.litellm_verificationtoken, "token", values)
-        except Exception as exc:
-            verbose_proxy_logger.warning("Could not read active verification token metadata: %s", exc)
-            return ()
+        return await find_many_in(self._prisma_client.db.litellm_verificationtoken, "token", values)
 
     async def _deleted_token_rows(self, values: tuple[str, ...]) -> tuple[_DeletedVerificationTokenRow, ...]:
         try:
