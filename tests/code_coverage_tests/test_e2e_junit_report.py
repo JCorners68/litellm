@@ -1,6 +1,6 @@
 """The JUnit report itself, written by a real pytest run.
 
-No proxy. test_e2e_metadata.py pins the functions that build the properties;
+No proxy. test_e2e_metadata.py pins the recorder's edge cases;
 this pins what reaches the XML once pytest, its junitxml plugin,
 pytest-rerunfailures and xdist are all in the loop. Each case writes a throwaway
 suite into a tmp dir and runs it in a child interpreter with tests/e2e's
