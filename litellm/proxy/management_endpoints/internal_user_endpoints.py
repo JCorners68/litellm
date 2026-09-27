@@ -53,6 +53,8 @@ from litellm.proxy.hooks.model_max_budget_limiter import build_model_max_budget_
 from litellm.proxy.hooks.user_management_event_hooks import UserManagementEventHooks
 from litellm.proxy.management_endpoints.common_daily_activity import (
     DailySpendRecord,
+    daily_activity_repository,
+    daily_activity_scope,
     get_daily_activity,
     get_daily_activity_aggregated,
 )
@@ -3072,18 +3074,22 @@ async def get_user_daily_activity_aggregated(
                 )
             entity_id = user_id
 
+        repository: Final = daily_activity_repository(prisma_client)
+        scope: Final = daily_activity_scope(
+            "litellm_dailyuserspend",
+            "user_id",
+            entity_id,
+            None,
+            api_key,
+            start_date,
+            end_date,
+            model,
+            timezone,
+            include_current_utc_day,
+        )
         return await get_daily_activity_aggregated(
-            prisma_client=prisma_client,
-            table_name="litellm_dailyuserspend",
-            entity_id_field="user_id",
-            entity_id=entity_id,
-            entity_metadata_field=None,
-            start_date=start_date,
-            end_date=end_date,
-            model=model,
-            api_key=api_key,
-            timezone_offset_minutes=timezone,
-            include_current_utc_day=include_current_utc_day,
+            repository,
+            scope,
         )
 
     except HTTPException:
