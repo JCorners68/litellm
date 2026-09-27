@@ -93,10 +93,10 @@ def test_post_call_counter_keys_skip_ids_that_are_not_strings():
     have no counter, and deriving the key set must never raise inside the cost callback."""
     placeholder = object()
     assert post_call_counter_keys(
-        token=placeholder,  # type: ignore[arg-type]
+        token=placeholder,  # pyright: ignore[reportArgumentType]  # synthetic payload placeholder, not an id
         team_id="team",
         user_id=None,
-        org_id=placeholder,  # type: ignore[arg-type]
+        org_id=placeholder,  # pyright: ignore[reportArgumentType]  # synthetic payload placeholder, not an id
         end_user_id="eu",
         tags=[placeholder, "t1"],
         model_access_groups=None,
