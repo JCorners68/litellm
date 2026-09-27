@@ -233,7 +233,6 @@ const UsagePage: React.FC<UsagePageProps> = ({ teams, organizations }) => {
     userSpendData.metadata?.total_api_keys,
   );
 
-  // Clear isDateChanging once the range finishes loading
   useEffect(() => {
     if (!loading) {
       setIsDateChanging(false);

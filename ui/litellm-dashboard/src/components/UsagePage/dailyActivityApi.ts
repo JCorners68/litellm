@@ -34,7 +34,7 @@ export interface DailyActivityRequest {
   accessToken: string;
   startTime: Date;
   endTime: Date;
-  entityIds?: readonly string[] | null; // null/undefined = all
+  entityIds?: readonly string[] | null;
   excludeEntityIds?: readonly string[];
   apiKey?: string | null;
   model?: string | null;
@@ -69,9 +69,6 @@ export const EMPTY_DAILY_ACTIVITY_RESPONSE: DailyActivityAggregatedResponse = {
   metadata: EMPTY_DAILY_ACTIVITY_METADATA,
 };
 
-// The generated schema marks every breakdown bucket optional and key metadata
-// partial; the local DailyData graph requires them. Filling the gaps in one
-// mapper is what lets every consumer keep reading the local types without a cast.
 type SchemaMetricWithMetadata = components["schemas"]["MetricWithMetadata"];
 type SchemaKeyMetricWithMetadata = components["schemas"]["KeyMetricWithMetadata"];
 

@@ -120,7 +120,6 @@ const createMockModelActivityData = (label: string, overrides: Partial<ModelActi
   total_spend: 100.5,
   total_cache_read_input_tokens: 1000,
   total_cache_creation_input_tokens: 500,
-  top_api_keys: [],
   top_models: [],
   daily_data: [
     {
@@ -152,7 +151,6 @@ const GPT_35_MODEL_DATA: ModelActivityData = {
   total_spend: 25.25,
   total_cache_read_input_tokens: 500,
   total_cache_creation_input_tokens: 250,
-  top_api_keys: [],
   top_models: [],
   daily_data: [
     {
@@ -264,7 +262,6 @@ describe("ActivityMetrics", () => {
       />,
     );
 
-    // Only the highest-spend section is expanded initially, so only its fetch fires.
     expect(await screen.findAllByText("Test Key")).toHaveLength(1);
     expect(fetchTopApiKeys).toHaveBeenCalledTimes(1);
     expect(fetchTopApiKeys).toHaveBeenCalledWith("gpt-4");
@@ -357,7 +354,6 @@ describe("ActivityMetrics", () => {
 
     render(<ActivityMetrics modelMetrics={multipleModels} />);
 
-    // Only the highest-spend section is expanded initially, so only its body is mounted.
     const sectionsMounted = () => screen.getAllByText("Spend per day").length;
     expect(sectionsMounted()).toBe(1);
 
@@ -759,7 +755,6 @@ describe("processActivityData", () => {
     expect(Object.keys(result).sort()).toEqual(["gpt-5.2", "gpt-5.2-eu"]);
     expect(result["gpt-5.2-eu"].label).toBe("gpt-5.2-eu");
     expect(result["gpt-5.2-eu"].total_spend).toBe(7);
-    expect(result["gpt-5.2-eu"].top_api_keys).toEqual([]);
     expect(result["gpt-5.2"].total_spend).toBe(3);
     expect(result["gpt-5.2"].total_requests).toBe(3);
   });
@@ -1075,141 +1070,6 @@ describe("processActivityData", () => {
 
     const result = processActivityData(dailyActivityWithBreakdown, "models");
 
-    expect(result["gpt-4"].top_api_keys).toEqual([]);
-  });
-
-  it("keeps top_api_keys empty even when many keys appear in the breakdown, since top keys come from a dedicated route", () => {
-    const dailyActivityWithManyKeys: { results: DailyData[] } = {
-      results: [
-        {
-          date: "2025-01-01",
-          metrics: {
-            spend: 100.5,
-            prompt_tokens: 30000,
-            completion_tokens: 20000,
-            total_tokens: 50000,
-            api_requests: 100,
-            successful_requests: 95,
-            failed_requests: 5,
-            cache_read_input_tokens: 1000,
-            cache_creation_input_tokens: 500,
-          },
-          breakdown: {
-            models: {
-              "gpt-4": {
-                metrics: {
-                  spend: 100.5,
-                  prompt_tokens: 30000,
-                  completion_tokens: 20000,
-                  total_tokens: 50000,
-                  api_requests: 100,
-                  successful_requests: 95,
-                  failed_requests: 5,
-                  cache_read_input_tokens: 1000,
-                  cache_creation_input_tokens: 500,
-                },
-                metadata: {},
-                api_key_breakdown: {
-                  "key-1": {
-                    metrics: {
-                      spend: 20.0,
-                      prompt_tokens: 6000,
-                      completion_tokens: 4000,
-                      total_tokens: 10000,
-                      api_requests: 20,
-                      successful_requests: 19,
-                      failed_requests: 1,
-                      cache_read_input_tokens: 200,
-                      cache_creation_input_tokens: 100,
-                    },
-                    metadata: { key_alias: "key-1", team_id: null },
-                  },
-                  "key-2": {
-                    metrics: {
-                      spend: 19.0,
-                      prompt_tokens: 5700,
-                      completion_tokens: 3800,
-                      total_tokens: 9500,
-                      api_requests: 19,
-                      successful_requests: 18,
-                      failed_requests: 1,
-                      cache_read_input_tokens: 190,
-                      cache_creation_input_tokens: 95,
-                    },
-                    metadata: { key_alias: "key-2", team_id: null },
-                  },
-                  "key-3": {
-                    metrics: {
-                      spend: 18.0,
-                      prompt_tokens: 5400,
-                      completion_tokens: 3600,
-                      total_tokens: 9000,
-                      api_requests: 18,
-                      successful_requests: 17,
-                      failed_requests: 1,
-                      cache_read_input_tokens: 180,
-                      cache_creation_input_tokens: 90,
-                    },
-                    metadata: { key_alias: "key-3", team_id: null },
-                  },
-                  "key-4": {
-                    metrics: {
-                      spend: 17.0,
-                      prompt_tokens: 5100,
-                      completion_tokens: 3400,
-                      total_tokens: 8500,
-                      api_requests: 17,
-                      successful_requests: 16,
-                      failed_requests: 1,
-                      cache_read_input_tokens: 170,
-                      cache_creation_input_tokens: 85,
-                    },
-                    metadata: { key_alias: "key-4", team_id: null },
-                  },
-                  "key-5": {
-                    metrics: {
-                      spend: 16.0,
-                      prompt_tokens: 4800,
-                      completion_tokens: 3200,
-                      total_tokens: 8000,
-                      api_requests: 16,
-                      successful_requests: 15,
-                      failed_requests: 1,
-                      cache_read_input_tokens: 160,
-                      cache_creation_input_tokens: 80,
-                    },
-                    metadata: { key_alias: "key-5", team_id: null },
-                  },
-                  "key-6": {
-                    metrics: {
-                      spend: 15.0,
-                      prompt_tokens: 4500,
-                      completion_tokens: 3000,
-                      total_tokens: 7500,
-                      api_requests: 15,
-                      successful_requests: 14,
-                      failed_requests: 1,
-                      cache_read_input_tokens: 150,
-                      cache_creation_input_tokens: 75,
-                    },
-                    metadata: { key_alias: "key-6", team_id: null },
-                  },
-                },
-              },
-            },
-            model_groups: {},
-            mcp_servers: {},
-            providers: {},
-            api_keys: {},
-            entities: {},
-          },
-        },
-      ],
-    };
-
-    const result = processActivityData(dailyActivityWithManyKeys, "models");
-
-    expect(result["gpt-4"].top_api_keys).toEqual([]);
   });
 
   it("should return empty object when results array is empty", () => {
@@ -1327,7 +1187,6 @@ describe("processActivityData", () => {
 
     const result = processActivityData(dailyActivityWithBreakdown, "api_keys", MOCK_TEAMS);
 
-    expect(result["key-1"].top_api_keys).toEqual([]);
   });
 
   it("should handle missing cache tokens gracefully", () => {

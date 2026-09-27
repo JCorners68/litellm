@@ -3,10 +3,6 @@ import type { KeyActivityRow } from "../dailyActivityApi";
 import { formatKeyLabel } from "@/components/activity_metrics";
 import type { ModelActivityData } from "../types";
 
-/**
- * Maps server-side key search rows into the same ModelActivityData shape the
- * local api_keys breakdown produces, so remote rows render identically.
- */
 export const keyActivityRowsToMetrics = (
   rows: readonly KeyActivityRow[],
   teams: Team[],
@@ -27,7 +23,6 @@ export const keyActivityRowsToMetrics = (
         total_spend: row.metrics.spend,
         total_response_time_ms: row.metrics.total_response_time_ms,
         total_timed_requests: row.metrics.timed_requests,
-        top_api_keys: [],
         top_models: [],
         daily_data: [],
       };

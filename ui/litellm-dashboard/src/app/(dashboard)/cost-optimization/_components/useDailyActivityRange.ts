@@ -19,11 +19,6 @@ export interface DateRange {
   to?: Date;
 }
 
-/**
- * The scope every scoped fetch (aggregated rows, cache-leakage keys) is issued
- * under. Both fields are passed straight through to the endpoint as filters, so
- * the caller — not this hook — decides what the viewer may see.
- */
 export interface DailyActivityScope {
   accessToken: string | null;
   startTime: Date | null;

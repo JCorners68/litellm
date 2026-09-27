@@ -28,7 +28,6 @@ function activity(label: string, user_email: string | null, user_id: string | nu
     prompt_tokens: 5,
     completion_tokens: 5,
     total_spend: 0.01,
-    top_api_keys: [],
     top_models: [],
     daily_data: [],
   };

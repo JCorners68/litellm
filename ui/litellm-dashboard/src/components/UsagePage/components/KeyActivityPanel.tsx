@@ -57,15 +57,12 @@ const KeyActivityPanel: React.FC<KeyActivityPanelProps> = ({
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-    // teams is a stable list per render of the parent view
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- teams is stable per parent render
   }, [searchTerm, searchKeys]);
 
   const searching = searchTerm !== null && searchResult?.term !== searchTerm;
   const remoteMetrics = searchResult?.term === searchTerm ? searchResult.metrics : {};
 
-  // Server rows win over the locally filtered map: they cover keys beyond the
-  // truncated client-side breakdown.
   const filtered = useMemo(
     () => ({ ...localFiltered, ...remoteMetrics }),
     [localFiltered, remoteMetrics],

@@ -16,11 +16,6 @@ interface SettledKeys {
   failed: boolean;
 }
 
-/**
- * Server-ranked cache-leakage keys for the same scope the range was fetched
- * under. The key dimension needs every key ranked server-side, so it reads
- * cache_leakage_keys rather than the truncated per-key breakdown.
- */
 export const useCacheLeakageKeys = (range: DailyActivityRange, enabled: boolean): CacheLeakageKeysResult => {
   const { accessToken, startTime, endTime, userId, apiKey } = range.scope;
   const [settled, setSettled] = useState<SettledKeys | null>(null);
@@ -55,9 +50,7 @@ export const useCacheLeakageKeys = (range: DailyActivityRange, enabled: boolean)
     return () => {
       requestIdRef.current++;
     };
-    // scopeKey folds the whole scope into a stable string so the effect only
-    // re-fires when the scope actually changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scopeKey serializes the scope
   }, [scopeKey]);
 
   const current = scopeKey !== null && settled?.key === scopeKey ? settled : null;

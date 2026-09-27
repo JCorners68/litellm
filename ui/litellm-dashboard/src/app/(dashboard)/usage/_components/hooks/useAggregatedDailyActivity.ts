@@ -22,12 +22,6 @@ interface SettledFetch {
   failed: boolean;
 }
 
-/**
- * Single-shot daily activity fetch for the bounded aggregated routes. `fetch` is
- * read through a ref so the effect re-runs only when `deps` change; a request-id
- * counter drops out-of-order resolutions, and results are keyed to the deps they
- * settled under so a superseded range's data never renders under a new one.
- */
 export function useAggregatedDailyActivity({ fetch, enabled, deps }: Options): Result {
   const [settled, setSettled] = useState<SettledFetch | null>(null);
   const requestIdRef = useRef(0);
@@ -60,8 +54,6 @@ export function useAggregatedDailyActivity({ fetch, enabled, deps }: Options): R
     return () => {
       requestIdRef.current++;
     };
-    // depsKey is a stable JSON string so the effect only re-fires when dep values change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, depsKey]);
 
   const current = enabled && settled?.key === depsKey ? settled : null;

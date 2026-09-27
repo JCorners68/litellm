@@ -18,7 +18,7 @@ import { Team } from "./key_team_helpers/key_list";
 import KeyModelUsageView from "./UsagePage/components/KeyModelUsageView";
 import { keyActivityLabel } from "./UsagePage/keyActivityLabel";
 import type { ModelTopKeysResponse } from "./UsagePage/dailyActivityApi";
-import { DailyData, KeyMetricWithMetadata, ModelActivityData, TopApiKeyData, TopModelData } from "./UsagePage/types";
+import { DailyData, KeyMetricWithMetadata, ModelActivityData, TopModelData } from "./UsagePage/types";
 import { averageResponseTimeMs, formatResponseTime, valueFormatter } from "./UsagePage/utils/value_formatters";
 
 interface ActivityMetricsProps {
@@ -46,14 +46,20 @@ const ModelTopKeys = ({
   modelName: string;
   fetchTopApiKeys: (model: string) => Promise<ModelTopKeysResponse>;
 }) => {
-  const [rows, setRows] = useState<TopApiKeyData[] | null>(null);
+  interface ModelTopKeyRow {
+    api_key: string;
+    key_alias: string | null;
+    team_id: string | null;
+    spend: number;
+    requests: number;
+    tokens: number;
+  }
+  const [rows, setRows] = useState<ModelTopKeyRow[] | null>(null);
   const fetchRef = React.useRef(fetchTopApiKeys);
   React.useEffect(() => {
     fetchRef.current = fetchTopApiKeys;
   });
 
-  // This section mounts on first expand (the collapsible keeps content unmounted
-  // until then), so the fetch fires exactly once per model row.
   React.useEffect(() => {
     let cancelled = false;
     fetchRef
@@ -597,7 +603,6 @@ export const processActivityData = (
           total_cache_creation_input_tokens: 0,
           total_response_time_ms: 0,
           total_timed_requests: 0,
-          top_api_keys: [],
           top_models: [],
           daily_data: [],
         };
@@ -636,10 +641,6 @@ export const processActivityData = (
       });
     });
   });
-
-  // top_api_keys is intentionally left empty: the bounded responses no longer carry
-  // an api_key_breakdown per model, so per-model top keys are fetched lazily from
-  // the model_top_keys route when a section is expanded.
 
   // Process Model breakdowns for each API key (only when key is 'api_keys')
   if (key === "api_keys") {

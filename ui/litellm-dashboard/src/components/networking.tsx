@@ -1292,7 +1292,6 @@ export const transformRequestCall = async (accessToken: string, request: object)
 };
 
 // CONTRACT: per-entity filter parameter names for the daily activity routes.
-// user takes a single id (entityIds[0]); the rest are comma-joined lists.
 const ENTITY_ID_QUERY_PARAM: Record<DailyActivityEntity, string> = {
   user: "user_id",
   team: "team_ids",
@@ -1323,14 +1322,11 @@ const dailyActivityQuery = (
   return {
     start_date: formatDate(req.startTime),
     end_date: formatDate(req.endTime),
-    // Send timezone offset so backend can adjust date range for UTC storage
     timezone: new Date().getTimezoneOffset().toString(),
     [ENTITY_ID_QUERY_PARAM[entity]]: entityIdValue,
     [EXCLUDE_ENTITY_ID_QUERY_PARAM[entity]]:
       excludeEntityIds && excludeEntityIds.length > 0 ? excludeEntityIds.join(",") : undefined,
     model: req.model,
-    // Passed raw: the serializer drops null and undefined but keeps "", so an empty
-    // filter stays a filter instead of widening into an unscoped, proxy-wide read.
     api_key: req.apiKey,
     include_current_utc_day: req.includeCurrentUtcDay ? "true" : undefined,
     ...extra,

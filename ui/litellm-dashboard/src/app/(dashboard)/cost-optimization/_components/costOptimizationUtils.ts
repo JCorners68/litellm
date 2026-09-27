@@ -102,11 +102,6 @@ const aggregateByModel = (results: readonly DailyData[]): Map<string, LeakageAcc
   return byModel;
 };
 
-/**
- * Realized savings per cached token, computed over the model_groups rollups:
- * unlike the per-key breakdown (truncated at api_key_limit), the model rollups
- * cover every key, so the rate is not skewed by the truncation.
- */
 export const netSavingsPerCachedToken = (results: readonly DailyData[]): number | null => {
   const totals = [...aggregateByModel(results).values()].reduce(
     (agg, a) => ({
@@ -115,12 +110,7 @@ export const netSavingsPerCachedToken = (results: readonly DailyData[]): number 
     }),
     { cachedTokens: 0, realizedCachingSavings: 0 },
   );
-  // prompt_caching_savings_spend is net of the cache-write premium, so the rate has to
-  // divide by every token that took the cache path -- a key that starts caching pays
-  // those write premiums too. Dividing by reads alone overstates it and, on write-heavy
-  // traffic where the net is negative, would flip the sign of a real loss into a saving
   const rate = totals.cachedTokens > 0 ? totals.realizedCachingSavings / totals.cachedTokens : null;
-  // A non-positive rate prices no leakage: there is no saving to extrapolate from
   return rate != null && rate > 0 ? rate : null;
 };
 
@@ -151,10 +141,6 @@ const sortAndLimit = (rows: CacheLeakageRow[], rate: number | null, limit: numbe
     )
     .slice(0, limit);
 
-/**
- * Key-dimension rows from the server-ranked cache_leakage_keys response, which
- * covers every key instead of the truncated per-key breakdown.
- */
 export const leakageRowsFromKeyRows = (
   rows: readonly KeyActivityRow[],
   rate: number | null,
