@@ -1,10 +1,8 @@
-import json
+import copy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, cast
-
-from pydantic import TypeAdapter
 
 from litellm.litellm_core_utils.asyncify import asyncify
 from litellm.litellm_core_utils.prompt_templates.image_handling import async_inline_remote_media
@@ -32,23 +30,21 @@ class GeminiCountTokensPayload:
 
 
 _ANTHROPIC_ADAPTER: Final = LiteLLMAnthropicMessagesAdapter()
-_JSON_OBJECT: Final = TypeAdapter(dict[str, object])
-_JSON_ARRAY: Final = TypeAdapter(list[object])
 
 
-def _json_object_copy(value: Mapping[str, object]) -> dict[str, object]:  # mutable-ok: adapter pops keys
-    return _JSON_OBJECT.validate_json(json.dumps(value, default=dict))
+def _dict_copy(value: Mapping[str, object]) -> dict[str, object]:  # mutable-ok: adapter pops keys
+    return copy.deepcopy(dict(value))
 
 
-def _json_array_copy(value: Sequence[object]) -> list[object]:  # mutable-ok: the chat converters take plain lists
-    return _JSON_ARRAY.validate_json(json.dumps(value, default=dict))
+def _list_copy(value: Sequence[Mapping[str, object]]) -> list[object]:  # mutable-ok: the chat converters take lists
+    return [_dict_copy(item) for item in value]  # mutable-ok: the chat converters take plain lists
 
 
 def _tool_params(tools: Sequence[object], web_search_options: object | None) -> Mapping[str, object]:
     return MappingProxyType(
         {
             key: value
-            for key, value in (("tools", tuple(tools) or None), ("web_search_options", web_search_options))
+            for key, value in (("tools", list(tools) or None), ("web_search_options", web_search_options))
             if value is not None
         }
     )
@@ -58,7 +54,7 @@ def _gemini_tools_like_chat(model: str, tool_params: Mapping[str, object]) -> tu
     if not tool_params:
         return None
     optional_params: Final = GoogleAIStudioGeminiConfig().map_openai_params(
-        non_default_params=_json_object_copy(tool_params),
+        non_default_params=_dict_copy(tool_params),
         optional_params={},  # mutable-ok: the chat mapper writes the Gemini tools into it
         model=model,
         drop_params=False,
@@ -111,12 +107,12 @@ async def _anthropic_payload(
 ) -> GeminiCountTokensPayload:
     request: Final = cast(  # cast-ok: the same unvalidated dict the /v1/messages adapter builds its request from
         AnthropicMessagesRequest,
-        _json_object_copy(
+        _dict_copy(
             MappingProxyType(
                 {key: value for key, value in (("model", model), ("system", system), ("tools", tools)) if value}
             )
         )
-        | {"messages": sanitize_replayed_anthropic_messages(_json_array_copy(messages))},
+        | {"messages": sanitize_replayed_anthropic_messages(_list_copy(messages))},
     )
     openai_request, _ = _ANTHROPIC_ADAPTER.translate_anthropic_to_openai(
         anthropic_message_request=request, custom_llm_provider="gemini"
@@ -139,7 +135,7 @@ async def _openai_payload(
 ) -> GeminiCountTokensPayload:
     return await _payload_like_chat(
         model=model,
-        messages=_json_array_copy(
+        messages=_list_copy(
             (MappingProxyType({"role": "system", "content": system}), *messages) if system else messages
         ),
         tool_params=_tool_params(tools=tools or (), web_search_options=None),
