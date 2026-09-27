@@ -3737,14 +3737,14 @@ async def run_spend_counter_pipeline(pending: Sequence[PendingSpendIncrement]) -
         return ()
     redis_cache: Final = spend_counter_cache.redis_cache
     if redis_cache is None:
-        in_memory: Final[list[float | None]] = []
-        for item in pending:
-            in_memory.append(
+        return tuple(
+            [
                 await SpendCounterReseed.increment_in_memory(
                     spend_counter_cache=spend_counter_cache, counter_key=item.counter_key, increment=item.increment
                 )
-            )
-        return tuple(in_memory)
+                for item in pending
+            ]
+        )
     ttl: Final = redis_cache.get_ttl()
     increment_list: Final = [  # mutable-ok: async_increment_pipeline signature requires list[RedisPipelineIncrementOperation]
         RedisPipelineIncrementOperation(key=item.counter_key, increment_value=item.increment, ttl=ttl)
