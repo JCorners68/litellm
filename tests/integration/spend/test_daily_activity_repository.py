@@ -158,6 +158,21 @@ async def test_repository_queries_and_exports_seeded_daily_activity(monkeypatch:
         )
         assert sum(row.spend for row in exports) == 273.0
         assert sum(row.flat_cost for row in exports) == 0.0
+        deleted_key_export: Final = next(row for row in exports if row.api_key == "key-target")
+        assert (deleted_key_export.key_alias, deleted_key_export.user_id, deleted_key_export.user_email) == (
+            "deleted-target",
+            "user-1",
+            "user@example.com",
+        )
+        user_exports: Final = tuple(
+            [row async for row in repository.export_rows(team_scope, export_type=ExportType.DAILY_WITH_USERS)]
+        )
+        assert len(user_exports) == 1
+        assert (user_exports[0].user_id, user_exports[0].user_email, user_exports[0].spend) == (
+            "user-1",
+            "user@example.com",
+            273.0,
+        )
         daily_export: Final = tuple(
             [row async for row in repository.export_rows(team_scope, export_type=ExportType.DAILY)]
         )
@@ -173,6 +188,21 @@ async def test_repository_queries_and_exports_seeded_daily_activity(monkeypatch:
         assert metadata["key-target"].key_exists is False
         assert metadata["key-target"].key_alias == "deleted-target"
         assert metadata["key-target"].tags == ("archived",)
+
+
+@pytest.mark.asyncio
+async def test_aggregated_returns_totals_when_top_key_limit_is_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(constants, "USAGE_TOP_API_KEYS_LIMIT", 0)
+    async with _daily_activity_database() as database:
+        aggregate: Final = await _repository(database).aggregated(
+            _scope(DailyActivityTable.TEAM, "team_id", "team-1"),
+            include_entity_breakdown=False,
+        )
+
+        totals: Final = tuple(row for row in aggregate.grouping_rows if row.group_level == 127)
+        assert len(totals) == 1
+        assert totals[0].spend == 1273.0
+        assert all(row.api_key is None for row in aggregate.grouping_rows)
 
 
 @pytest.mark.asyncio

@@ -8,9 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import psycopg
 import pytest
+from fastapi import HTTPException
 from psycopg.rows import dict_row
 from pytest_postgresql import factories
 
+import litellm.proxy.management_endpoints.common_daily_activity as common_daily_activity_module
 from litellm.constants import (
     DAILY_GLOBAL_SPEND_RECONCILED_THROUGH_PARAM,
     PTU_SENTINEL_API_KEY,
@@ -18,7 +20,9 @@ from litellm.constants import (
 )
 from litellm.proxy.management_endpoints.common_daily_activity import (
     _is_user_agent_tag,
+    _ProxyDailyActivityReads,
     _record_to_spend_metrics,
+    compute_tag_metadata_totals,
     daily_activity_repository,
     daily_activity_scope,
     get_api_key_metadata,
@@ -36,7 +40,7 @@ from litellm.types.proxy.management_endpoints.common_daily_activity import (
     SpendAnalyticsPaginatedResponse,
     SpendMetrics,
 )
-from litellm.types.repositories.daily_activity import GroupingSetsRow
+from litellm.types.repositories.daily_activity import GroupingSetsRow, KeyMetadataRow
 
 
 async def _run_aggregated_daily_activity(
@@ -107,6 +111,98 @@ async def get_daily_activity_aggregated(
         include_current_utc_day=include_current_utc_day,
         include_entity_breakdown=include_entity_breakdown,
     )
+
+
+@pytest.mark.asyncio
+async def test_get_daily_activity_requires_a_database():
+    with pytest.raises(HTTPException) as error:
+        await get_daily_activity(
+            prisma_client=None,
+            table_name="litellm_dailyuserspend",
+            entity_id_field="user_id",
+            entity_id="user-1",
+            entity_metadata_field=None,
+            start_date="2026-06-16",
+            end_date="2026-06-16",
+            model=None,
+            api_key=None,
+            page=1,
+            page_size=10,
+        )
+
+    assert error.value.status_code == 500
+    assert error.value.detail == {
+        "error": common_daily_activity_module.CommonProxyErrors.db_not_connected_error.value
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_daily_activity_maps_repository_failures_to_http_errors():
+    mock_prisma = MagicMock()
+    mock_prisma.db = MagicMock()
+    mock_table = MagicMock()
+    mock_table.count = AsyncMock(return_value=0)
+    mock_table.find_many = AsyncMock(side_effect=RuntimeError("daily rows unavailable"))
+    mock_prisma.db.litellm_dailyuserspend = mock_table
+
+    with pytest.raises(HTTPException) as error:
+        await get_daily_activity(
+            prisma_client=mock_prisma,
+            table_name="litellm_dailyuserspend",
+            entity_id_field="user_id",
+            entity_id="user-1",
+            entity_metadata_field=None,
+            start_date="2026-06-16",
+            end_date="2026-06-16",
+            model=None,
+            api_key=None,
+            page=1,
+            page_size=10,
+        )
+
+    assert error.value.status_code == 500
+    assert error.value.detail == {"error": "Failed to fetch analytics: daily rows unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_get_daily_activity_aggregated_maps_repository_failures_to_http_errors():
+    repository = MagicMock()
+    repository.aggregated = AsyncMock(side_effect=RuntimeError("daily aggregate unavailable"))
+    scope = daily_activity_scope(
+        "litellm_dailyuserspend",
+        "user_id",
+        "user-1",
+        None,
+        None,
+        "2026-06-16",
+        "2026-06-16",
+        None,
+        None,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await _get_daily_activity_aggregated(repository, scope)
+
+    assert error.value.status_code == 500
+    assert error.value.detail == {"error": "Failed to fetch analytics: daily aggregate unavailable"}
+
+
+def test_compute_tag_metadata_totals_deduplicates_and_ignores_user_agent_tags():
+    smaller = _spend_record("key-1", spend=1.0)
+    smaller.request_id = "request-1"
+    smaller.tag = "environment: small"
+    larger = _spend_record("key-1", spend=4.0)
+    larger.request_id = "request-1"
+    larger.tag = "environment: large"
+    larger.api_requests = 1
+    user_agent = _spend_record("key-2", spend=10.0)
+    user_agent.request_id = "request-2"
+    user_agent.tag = "User-Agent: test"
+    user_agent.api_requests = 3
+
+    totals = compute_tag_metadata_totals((smaller, larger, user_agent))
+
+    assert (totals.spend, totals.api_requests) == (4.0, 1)
 
 
 @pytest.mark.asyncio
@@ -401,6 +497,49 @@ async def test_get_api_key_metadata_returns_active_key_metadata():
     assert "active-key-hash-123" in result
     assert result["active-key-hash-123"]["key_alias"] == "my-active-key"
     assert result["active-key-hash-123"]["team_id"] == "team-abc"
+
+
+@pytest.mark.asyncio
+async def test_recovered_key_metadata_preserves_resolved_tags_after_user_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved: Final = KeyMetadataRow(
+        api_key="key-hash",
+        key_alias="key alias",
+        team_id="team-id",
+        user_id="user-id",
+        user_email=None,
+        key_exists=True,
+        tags=("production", "internal"),
+    )
+    attach_details: Final = AsyncMock(
+        return_value={
+            "key-hash": {
+                "key_alias": "key alias",
+                "team_id": "team-id",
+                "user_id": "user-id",
+                "user_email": "user@example.com",
+                "key_exists": True,
+            }
+        }
+    )
+    monkeypatch.setattr(common_daily_activity_module, "attach_user_details", attach_details)
+    reads: Final = _ProxyDailyActivityReads(MagicMock())
+
+    result: Final = await reads.recover_key_metadata({"key-hash": resolved}, frozenset(("key-hash",)), None)
+
+    assert result == {
+        "key-hash": KeyMetadataRow(
+            api_key="key-hash",
+            key_alias="key alias",
+            team_id="team-id",
+            user_id="user-id",
+            user_email="user@example.com",
+            key_exists=True,
+            tags=("production", "internal"),
+        )
+    }
+    attach_details.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -701,12 +840,15 @@ def test_key_metadata_includes_recovered_user_email():
 
     meta = _key_metadata(
         {
-            "dirty-key": {
-                "key_alias": "batch-worker",
-                "team_id": "team-1",
-                "user_id": "alice",
-                "user_email": "alice@example.com",
-            }
+            "dirty-key": KeyMetadataRow(
+                api_key="dirty-key",
+                key_alias="batch-worker",
+                team_id="team-1",
+                user_id="alice",
+                user_email="alice@example.com",
+                key_exists=True,
+                tags=(),
+            )
         },
         "dirty-key",
     )
@@ -721,11 +863,15 @@ def test_key_metadata_includes_user_id_without_user_email():
 
     meta = _key_metadata(
         {
-            "dirty-key": {
-                "key_alias": "batch-worker",
-                "team_id": "team-1",
-                "user_id": "user-123",
-            }
+            "dirty-key": KeyMetadataRow(
+                api_key="dirty-key",
+                key_alias="batch-worker",
+                team_id="team-1",
+                user_id="user-123",
+                user_email=None,
+                key_exists=True,
+                tags=(),
+            )
         },
         "dirty-key",
     )
@@ -766,11 +912,15 @@ def test_update_breakdown_metrics_includes_user_email():
         user_id="alice",
     )
     api_key_metadata = {
-        "dirty-key": {
-            "key_alias": "batch-worker",
-            "team_id": "team-1",
-            "user_email": "alice@example.com",
-        }
+        "dirty-key": KeyMetadataRow(
+            api_key="dirty-key",
+            key_alias="batch-worker",
+            team_id="team-1",
+            user_id=None,
+            user_email="alice@example.com",
+            key_exists=True,
+            tags=(),
+        )
     }
 
     update_breakdown_metrics(

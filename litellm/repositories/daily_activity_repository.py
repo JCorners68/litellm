@@ -13,13 +13,13 @@ from litellm.repositories.chunked_in import find_many_in
 from litellm.repositories.daily_activity_sql import (
     ExportCursor,
     SqlQuery,
+    adjust_dates_for_timezone,
     build_aggregated_sql,
     build_cache_leakage_keys_sql,
     build_entity_rollup_sql,
     build_export_sql,
     build_key_search_sql,
     build_model_top_keys_sql,
-    build_where_clause,
 )
 from litellm.repositories.prisma_protocols import TableActions
 from litellm.types.repositories.daily_activity import (
@@ -91,6 +91,15 @@ _EXPORT_ADAPTER: Final = TypeAdapter(tuple[ExportRow, ...])
 _METADATA_TAGS_ADAPTER: Final = TypeAdapter(list[StrictStr])
 
 
+def _reads_global_rollup(scope: DailyActivityScope) -> bool:
+    return (
+        scope.table is DailyActivityTable.USER
+        and scope.entity_ids is None
+        and scope.api_keys is None
+        and not scope.exclude_entity_ids
+    )
+
+
 def _metadata_tags(value: object) -> tuple[str, ...]:
     stable_value: Final = value
     if not isinstance(value, list):
@@ -129,16 +138,7 @@ class DailyActivityRepository:
         return tuple(result)
 
     async def aggregated(self, scope: DailyActivityScope, *, include_entity_breakdown: bool) -> AggregatedRows:
-        marker: Final = (
-            await self._global_rollup_marker(scope)
-            if (
-                scope.table is DailyActivityTable.USER
-                and scope.entity_ids is None
-                and scope.api_keys is None
-                and not scope.exclude_entity_ids
-            )
-            else None
-        )
+        marker: Final = await self._global_rollup_marker(scope)
         grouping_query: Final = build_aggregated_sql(scope, global_rollup_through=marker)
         entity_query: Final = build_entity_rollup_sql(scope) if include_entity_breakdown else None
         grouping_result, entity_result = await asyncio.gather(
@@ -157,12 +157,7 @@ class DailyActivityRepository:
         )
 
     async def _global_rollup_marker(self, scope: DailyActivityScope) -> str | None:
-        if not (
-            scope.table is DailyActivityTable.USER
-            and scope.entity_ids is None
-            and scope.api_keys is None
-            and not scope.exclude_entity_ids
-        ):
+        if not _reads_global_rollup(scope):
             return None
         try:
             return await self._proxy_reads.global_rollup_reconciled_through()
@@ -215,11 +210,7 @@ class DailyActivityRepository:
             cursor = _next_export_cursor(batch, export_type)
 
     async def _active_token_rows(self, values: tuple[str, ...]) -> tuple[_VerificationTokenRow, ...]:
-        try:
-            return await find_many_in(self._prisma_client.db.litellm_verificationtoken, "token", values)
-        except Exception as exc:
-            verbose_proxy_logger.warning("Could not read active verification token metadata: %s", exc)
-            return ()
+        return await find_many_in(self._prisma_client.db.litellm_verificationtoken, "token", values)
 
     async def _deleted_token_rows(self, values: tuple[str, ...]) -> tuple[_DeletedVerificationTokenRow, ...]:
         try:
@@ -285,7 +276,12 @@ class DailyActivityRepository:
                 table = self._prisma_client.db.litellm_dailyenduserspend
             case DailyActivityTable.AGENT:
                 table = self._prisma_client.db.litellm_dailyagentspend
-        adjusted_start, adjusted_end = build_where_clause(scope)[1][:2]
+        adjusted_start, adjusted_end = adjust_dates_for_timezone(
+            scope.start_date,
+            scope.end_date,
+            scope.timezone_offset_minutes,
+            include_current_utc_day=scope.include_current_utc_day,
+        )
         entity_filter: Final = {
             **({"in": list(scope.entity_ids)} if scope.entity_ids is not None else {}),
             **({"not": {"in": list(scope.exclude_entity_ids)}} if scope.exclude_entity_ids else {}),

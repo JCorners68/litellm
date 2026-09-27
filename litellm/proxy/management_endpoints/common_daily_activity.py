@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Final, Protocol
@@ -112,30 +112,6 @@ class DailySpendRecord(Protocol):
     @property
     def timed_requests(self) -> int: ...
 
-    @property
-    def ptu_flat_cost(self) -> float: ...
-
-    @property
-    def user_id(self) -> str | None: ...
-
-    @property
-    def team_id(self) -> str | None: ...
-
-    @property
-    def tag(self) -> str | None: ...
-
-    @property
-    def organization_id(self) -> str | None: ...
-
-    @property
-    def end_user_id(self) -> str | None: ...
-
-    @property
-    def agent_id(self) -> str | None: ...
-
-    @property
-    def request_id(self) -> str | None: ...
-
 
 class _KeyMetadataDict(TypedDict, total=False):
     key_alias: ReadOnly[str | None]
@@ -150,30 +126,15 @@ class _AggregatedSpendData(TypedDict):
     totals: ReadOnly[SpendMetrics]
 
 
-def _key_metadata(api_key_metadata: Mapping[str, _KeyMetadataDict | KeyMetadataRow], api_key: str) -> KeyMetadata:
-    meta: Final = api_key_metadata.get(api_key, {})
-    if isinstance(meta, KeyMetadataRow):
-        return KeyMetadata(
-            key_alias=meta.key_alias,
-            team_id=meta.team_id,
-            user_id=meta.user_id,
-            user_email=meta.user_email,
-            key_exists=meta.key_exists,
-        )
+def _key_metadata(api_key_metadata: Mapping[str, KeyMetadataRow], api_key: str) -> KeyMetadata:
+    meta: Final = api_key_metadata.get(api_key)
     return KeyMetadata(
-        key_alias=meta.get("key_alias"),
-        team_id=meta.get("team_id"),
-        user_id=meta.get("user_id"),
-        user_email=meta.get("user_email"),
-        key_exists=meta.get("key_exists", False),
+        key_alias=meta.key_alias if meta is not None else None,
+        team_id=meta.team_id if meta is not None else None,
+        user_id=meta.user_id if meta is not None else None,
+        user_email=meta.user_email if meta is not None else None,
+        key_exists=meta.key_exists if meta is not None else False,
     )
-
-
-def _record_ptu_flat_cost(record: DailySpendRecord | RollupMetricsRow) -> float | None:
-    try:
-        return record.ptu_flat_cost
-    except AttributeError:
-        return None
 
 
 def _reported_flat_cost(record: DailySpendRecord | RollupMetricsRow) -> float:
@@ -190,7 +151,7 @@ def _reported_flat_cost(record: DailySpendRecord | RollupMetricsRow) -> float:
     a shared endpoint that made none before. Only a row actually carrying flat cost, which
     is a sentinel row, reaches it now.
     """
-    raw: Final = _record_ptu_flat_cost(record) or 0.0
+    raw: Final = getattr(record, "ptu_flat_cost", None) or 0.0
     if not raw:
         return 0.0
     if not is_ptu_cost_attribution_enabled():
@@ -243,15 +204,17 @@ def compute_tag_metadata_totals(records: Sequence[DailySpendRecord]) -> SpendMet
     """
     deduped_records: Final[dict[str, DailySpendRecord]] = {}
     for record in records:
-        if not record.request_id:
+        request_id: str | None = getattr(record, "request_id", None)
+        if not request_id:
             continue
 
-        if _is_user_agent_tag(record.tag):
+        tag_value: str | None = getattr(record, "tag", None)
+        if _is_user_agent_tag(tag_value):
             continue
 
-        current_best = deduped_records.get(record.request_id)
+        current_best = deduped_records.get(request_id)
         if current_best is None or record.spend > current_best.spend:
-            deduped_records[record.request_id] = record
+            deduped_records[request_id] = record
 
     metadata_metrics: Final = SpendMetrics()
     for record in deduped_records.values():
@@ -273,7 +236,7 @@ def update_breakdown_metrics(
     record: DailySpendRecord,
     model_metadata: Mapping[str, dict[str, object]],
     provider_metadata: Mapping[str, dict[str, object]],
-    api_key_metadata: Mapping[str, _KeyMetadataDict],
+    api_key_metadata: Mapping[str, KeyMetadataRow],
     entity_id_field: str | None = None,
     entity_metadata_field: Mapping[str, dict[str, object]] | None = None,
 ) -> BreakdownMetrics:
@@ -416,8 +379,7 @@ def update_breakdown_metrics(
 
     # Update entity-specific metrics if entity_id_field is provided
     if entity_id_field:
-        entity_value = _record_entity_value(record, entity_id_field)
-        entity_value = entity_value if entity_value else "Unassigned"  # allow for null entity_id_field
+        entity_value: Final[str] = getattr(record, entity_id_field, None) or "Unassigned"
         if entity_value not in breakdown.entities:
             breakdown.entities[entity_value] = MetricWithMetadata(
                 metrics=SpendMetrics(),
@@ -438,24 +400,6 @@ def update_breakdown_metrics(
             )
 
     return breakdown
-
-
-def _record_entity_value(record: DailySpendRecord, entity_id_field: str) -> str | None:
-    match entity_id_field:
-        case "user_id":
-            return record.user_id
-        case "team_id":
-            return record.team_id
-        case "tag":
-            return record.tag
-        case "organization_id":
-            return record.organization_id
-        case "end_user_id":
-            return record.end_user_id
-        case "agent_id":
-            return record.agent_id
-        case _:
-            return None
 
 
 def _spend_logs_window(dates: AbstractSet[str | None]) -> tuple[datetime, datetime] | None:
@@ -518,18 +462,29 @@ class _ProxyDailyActivityReads:
         )
         combined: Final = MappingProxyType({**after_token_recovery, **from_spend_logs})
         attached: Final = await attach_user_details(self.prisma_client, combined)
-        return {
-            key: KeyMetadataRow(
-                api_key=key,
-                key_alias=value.get("key_alias"),
-                team_id=value.get("team_id"),
-                user_id=value.get("user_id"),
-                user_email=value.get("user_email"),
-                key_exists=value.get("key_exists", False),
-                tags=(),
-            )
-            for key, value in attached.items()
-        }
+        return MappingProxyType(
+            {
+                key: replace(
+                    resolved[key],
+                    key_alias=value.get("key_alias"),
+                    team_id=value.get("team_id"),
+                    user_id=value.get("user_id"),
+                    user_email=value.get("user_email"),
+                    key_exists=value.get("key_exists", False),
+                )
+                if key in resolved
+                else KeyMetadataRow(
+                    api_key=key,
+                    key_alias=value.get("key_alias"),
+                    team_id=value.get("team_id"),
+                    user_id=value.get("user_id"),
+                    user_email=value.get("user_email"),
+                    key_exists=value.get("key_exists", False),
+                    tags=(),
+                )
+                for key, value in attached.items()
+            }
+        )
 
 
 def daily_activity_repository(prisma_client: PrismaClient) -> DailyActivityRepository:
@@ -588,7 +543,7 @@ async def get_api_key_metadata(
 def _aggregate_spend_records_sync(
     *,
     records: Sequence[DailySpendRecord],
-    api_key_metadata: Mapping[str, _KeyMetadataDict],
+    api_key_metadata: Mapping[str, KeyMetadataRow],
     entity_id_field: str | None,
     entity_metadata_field: Mapping[str, dict[str, object]] | None,
 ) -> _AggregatedSpendData:
@@ -637,7 +592,7 @@ def _aggregate_spend_records_sync(
 
 async def _aggregate_spend_records(
     *,
-    prisma_client: PrismaClient,
+    repository: DailyActivityRepository,
     records: Sequence[DailySpendRecord],
     entity_id_field: str | None,
     entity_metadata_field: Mapping[str, dict[str, object]] | None,
@@ -651,11 +606,13 @@ async def _aggregate_spend_records(
         record.api_key for record in records if record.api_key and record.api_key != PTU_SENTINEL_API_KEY
     }
 
-    api_key_metadata: dict[str, _KeyMetadataDict] = {}
-    if api_keys:
-        api_key_metadata = await get_api_key_metadata(
-            prisma_client, api_keys, _spend_logs_window(frozenset(record.date for record in records))
+    api_key_metadata: Final[Mapping[str, KeyMetadataRow]] = (
+        await repository.key_metadata(
+            frozenset(api_keys), _spend_logs_window(frozenset(record.date for record in records))
         )
+        if api_keys
+        else MappingProxyType({})
+    )
 
     return await asyncio.to_thread(
         _aggregate_spend_records_sync,
@@ -721,7 +678,7 @@ def _record_to_spend_metrics(record: RollupMetricsRow) -> SpendMetrics:
 def _aggregate_grouping_sets_records_sync(
     *,
     records: Sequence[GroupingSetsRow],
-    api_key_metadata: Mapping[str, _KeyMetadataDict],
+    api_key_metadata: Mapping[str, KeyMetadataRow],
 ) -> _AggregatedSpendData:
     """Build the response from rollup rows produced by the GROUPING SETS query.
 
@@ -852,21 +809,11 @@ async def _aggregate_grouping_sets_records(
     """Async wrapper: fetch api_key_metadata, then dispatch on a worker thread."""
     api_keys: Final[set[str]] = {r.api_key for r in records if r.api_key and r.api_key != PTU_SENTINEL_API_KEY}
 
-    key_rows: Final = (
+    api_key_metadata: Final[Mapping[str, KeyMetadataRow]] = (
         await repository.key_metadata(frozenset(api_keys), _spend_logs_window(frozenset(r.date for r in records)))
         if api_keys
-        else {}
+        else MappingProxyType({})
     )
-    api_key_metadata: Final = {
-        key: {
-            "key_alias": value.key_alias,
-            "team_id": value.team_id,
-            "user_id": value.user_id,
-            "user_email": value.user_email,
-            "key_exists": value.key_exists,
-        }
-        for key, value in key_rows.items()
-    }
 
     return await asyncio.to_thread(
         _aggregate_grouping_sets_records_sync,
@@ -923,7 +870,7 @@ async def get_daily_activity(
                 **(await resolve_entity_metadata(daily_spend_data)),
             }
         aggregated: Final = await _aggregate_spend_records(
-            prisma_client=prisma_client,
+            repository=repository,
             records=daily_spend_data,
             entity_id_field=entity_id_field,
             entity_metadata_field=resolved_entity_metadata,
@@ -967,7 +914,7 @@ def _fold_entity_rollups_sync(
     *,
     results: Sequence[DailySpendData],
     entity_rows: Sequence[EntityRollupRow],
-    api_key_metadata: Mapping[str, _KeyMetadataDict | KeyMetadataRow],
+    api_key_metadata: Mapping[str, KeyMetadataRow],
     entity_metadata_field: Mapping[str, dict[str, object]] | None,  # mutable-ok: shared field shape
 ) -> None:
     """Write breakdown.entities onto the already-built per-day results."""
@@ -1016,12 +963,12 @@ async def get_daily_activity_aggregated(
             entity_api_keys: Final = frozenset(
                 row.api_key for row in entity_records if row.api_key and row.api_key != PTU_SENTINEL_API_KEY
             )
-            entity_key_metadata: Final = (
+            entity_key_metadata: Final[Mapping[str, KeyMetadataRow]] = (
                 await repository.key_metadata(
                     entity_api_keys, _spend_logs_window(frozenset(row.date for row in entity_records))
                 )
                 if entity_api_keys
-                else {}
+                else MappingProxyType({})
             )
             await asyncio.to_thread(
                 _fold_entity_rollups_sync,

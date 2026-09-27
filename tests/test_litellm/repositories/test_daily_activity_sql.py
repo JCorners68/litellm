@@ -222,6 +222,15 @@ def test_aggregated_query_binds_sentinel_and_marker_after_scope_values(monkeypat
     )
 
 
+def test_aggregated_query_supports_a_zero_top_key_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(constants, "USAGE_TOP_API_KEYS_LIMIT", 0)
+
+    query = build_aggregated_sql(_scope(), global_rollup_through=None)
+
+    assert query.params[-1] == 0
+    assert f"LIMIT ${len(query.params)}" in query.sql
+
+
 def test_entity_rollup_uses_validated_entity_column_and_array_filters() -> None:
     query = build_entity_rollup_sql(_scope(table=DailyActivityTable.TEAM, entity_ids=None, api_keys=("key-1", "key-2")))
 
@@ -282,7 +291,7 @@ def test_query_builders_reject_nonpositive_limits(builder) -> None:
         (ExportType.DAILY_WITH_MODELS, "COALESCE(scoped.model, '')", "api_key <> $3", ""),
         (
             ExportType.DAILY_WITH_USERS,
-            "COALESCE(vt.user_id, '')",
+            "COALESCE(vt.user_id, dvt.user_id, '')",
             "api_key <> $3",
             'LEFT JOIN "LiteLLM_VerificationToken"',
         ),
@@ -318,6 +327,15 @@ def test_export_groups_by_requested_key_and_binds_cursor_after_scope(
         "group-3",
         2,
     )
+
+
+@pytest.mark.parametrize("export_type", [ExportType.DAILY_WITH_KEYS, ExportType.DAILY_WITH_USERS])
+def test_export_uses_latest_deleted_key_metadata(export_type: ExportType) -> None:
+    query = build_export_sql(_scope(entity_ids=None), export_type=export_type, after=None, batch_size=2)
+
+    assert 'FROM "LiteLLM_DeletedVerificationToken"' in query.sql
+    assert "ORDER BY deleted_at DESC" in query.sql
+    assert "COALESCE(vt.user_id, dvt.user_id)" in query.sql
 
 
 @pytest.mark.parametrize("export_type", tuple(ExportType))

@@ -44,17 +44,26 @@ def _scope(
     table: DailyActivityTable = DailyActivityTable.USER,
     entity_ids: tuple[str, ...] | None = ("user-1",),
     api_keys: tuple[str, ...] | None = None,
+    exclude_entity_ids: tuple[str, ...] = (),
+    model: str | None = None,
 ) -> DailyActivityScope:
-    entity_field: Final = "team_id" if table is DailyActivityTable.TEAM else "user_id"
+    entity_field: Final = {
+        DailyActivityTable.USER: "user_id",
+        DailyActivityTable.TEAM: "team_id",
+        DailyActivityTable.TAG: "tag",
+        DailyActivityTable.ORGANIZATION: "organization_id",
+        DailyActivityTable.CUSTOMER: "end_user_id",
+        DailyActivityTable.AGENT: "agent_id",
+    }[table]
     return DailyActivityScope(
         table=table,
         entity_id_field=entity_field,
         entity_ids=entity_ids,
-        exclude_entity_ids=(),
+        exclude_entity_ids=exclude_entity_ids,
         api_keys=api_keys,
         start_date="2026-01-01",
         end_date="2026-01-31",
-        model=None,
+        model=model,
         timezone_offset_minutes=None,
     )
 
@@ -101,9 +110,20 @@ class _FakeTable:
         self.rows: Final = tuple(rows)
         self.find_many_calls: list[Mapping[str, object]] = []
         self.count_calls: list[Mapping[str, object]] = []
+        self.pagination_calls: list[
+            tuple[int | None, int | None, tuple[Mapping[str, str], ...] | None]
+        ] = []
 
-    async def find_many(self, *, where: Mapping[str, object]) -> tuple[object, ...]:
+    async def find_many(
+        self,
+        *,
+        where: Mapping[str, object],
+        skip: int | None = None,
+        take: int | None = None,
+        order: tuple[Mapping[str, str], ...] | None = None,
+    ) -> tuple[object, ...]:
         self.find_many_calls.append(where)
+        self.pagination_calls.append((skip, take, order))
         if "token" not in where:
             return self.rows
         token_filter: Final = where["token"]
@@ -117,6 +137,22 @@ class _FakeTable:
     async def count(self, *, where: Mapping[str, object]) -> int:
         self.count_calls.append(where)
         return len(self.rows)
+
+
+class _FailingTable(_FakeTable):
+    def __init__(self, failure: str) -> None:
+        super().__init__()
+        self.failure: Final = failure
+
+    async def find_many(
+        self,
+        *,
+        where: Mapping[str, object],
+        skip: int | None = None,
+        take: int | None = None,
+        order: tuple[Mapping[str, str], ...] | None = None,
+    ) -> tuple[object, ...]:
+        raise RuntimeError(f"{self.failure}: {where!r} {skip!r} {take!r} {order!r}")
 
 
 class _FakeDatabase:
@@ -308,12 +344,26 @@ async def test_key_metadata_prefers_active_rows_and_recovers_all_requested_keys(
         metadata={"tags": ["archived"]},
         deleted_at=datetime(2026, 1, 4, tzinfo=timezone.utc),
     )
-    database.litellm_verificationtoken = _FakeTable((active,))
+    malformed_non_list: Final = _FakeVerificationToken(
+        token="malformed-non-list",
+        key_alias=None,
+        team_id=None,
+        user_id=None,
+        metadata={"tags": "invalid"},
+    )
+    malformed_list: Final = _FakeVerificationToken(
+        token="malformed-list",
+        key_alias=None,
+        team_id=None,
+        user_id=None,
+        metadata={"tags": [1]},
+    )
+    database.litellm_verificationtoken = _FakeTable((active, malformed_non_list, malformed_list))
     database.litellm_deletedverificationtoken = _FakeTable((deleted_active_duplicate, deleted_older, deleted_newer))
     proxy_reads: Final = _ProxyReads()
     repository, _ = _repository(database, proxy_reads)
     window: Final = (datetime(2026, 1, 1), datetime(2026, 2, 1))
-    requested: Final = frozenset(("active", "deleted", "unresolved"))
+    requested: Final = frozenset(("active", "deleted", "malformed-non-list", "malformed-list", "unresolved"))
 
     result = await repository.key_metadata(requested, window)
 
@@ -329,6 +379,8 @@ async def test_key_metadata_prefers_active_rows_and_recovers_all_requested_keys(
     assert result["deleted"].key_alias == "newer"
     assert result["deleted"].key_exists is False
     assert result["deleted"].tags == ("archived",)
+    assert result["malformed-non-list"].tags == ()
+    assert result["malformed-list"].tags == ()
     assert len(database.litellm_deletedverificationtoken.find_many_calls) == 1
     assert set(database.litellm_deletedverificationtoken.find_many_calls[0]["token"]["in"]) == {
         "deleted",
@@ -344,6 +396,27 @@ async def test_key_metadata_prefers_active_rows_and_recovers_all_requested_keys(
 
 
 @pytest.mark.asyncio
+async def test_key_metadata_continues_with_active_rows_when_deleted_lookup_fails() -> None:
+    database = _FakeDatabase()
+    active: Final = _FakeVerificationToken(
+        token="active",
+        key_alias="current",
+        team_id=None,
+        user_id=None,
+        metadata={"tags": []},
+    )
+    database.litellm_verificationtoken = _FakeTable((active,))
+    database.litellm_deletedverificationtoken = _FailingTable("deleted token query failed")
+    repository, proxy_reads = _repository(database)
+
+    result = await repository.key_metadata(frozenset(("active", "deleted")), None)
+
+    assert result["active"].key_alias == "current"
+    assert tuple(proxy_reads.recovery_calls[0][0]) == ("active",)
+    assert proxy_reads.recovery_calls[0][1] == frozenset(("active", "deleted"))
+
+
+@pytest.mark.asyncio
 async def test_key_metadata_empty_set_does_not_query_tables() -> None:
     database = _FakeDatabase()
     repository, proxy_reads = _repository(database)
@@ -351,6 +424,82 @@ async def test_key_metadata_empty_set_does_not_query_tables() -> None:
     assert await repository.key_metadata(frozenset(), None) == {}
     assert database.litellm_verificationtoken.find_many_calls == []
     assert proxy_reads.recovery_calls == []
+
+
+@pytest.mark.asyncio
+async def test_key_metadata_propagates_active_token_lookup_failures() -> None:
+    database = _FakeDatabase()
+    database.litellm_verificationtoken = _FailingTable("active token query failed")
+    repository, _ = _repository(database)
+
+    with pytest.raises(RuntimeError, match="active token query failed"):
+        await repository.key_metadata(frozenset(("active",)), None)
+
+    assert database.litellm_deletedverificationtoken.find_many_calls == []
+
+
+@pytest.mark.asyncio
+async def test_aggregated_normalizes_a_null_raw_query_result() -> None:
+    database = _FakeDatabase((None,))
+    repository, _ = _repository(database)
+
+    result = await repository.aggregated(_scope(), include_entity_breakdown=False)
+
+    assert result.grouping_rows == ()
+    assert result.entity_rows is None
+    assert result.distinct_api_keys == 0
+    assert len(database.query_calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("table", "entity_field"),
+    [
+        (DailyActivityTable.USER, "user_id"),
+        (DailyActivityTable.TEAM, "team_id"),
+        (DailyActivityTable.TAG, "tag"),
+        (DailyActivityTable.ORGANIZATION, "organization_id"),
+        (DailyActivityTable.CUSTOMER, "end_user_id"),
+        (DailyActivityTable.AGENT, "agent_id"),
+    ],
+)
+async def test_daily_rows_selects_the_table_and_applies_filters_and_pagination(
+    table: DailyActivityTable, entity_field: str
+) -> None:
+    database = _FakeDatabase()
+    repository, _ = _repository(database)
+    scope = _scope(
+        table=table,
+        entity_ids=("entity-1",),
+        exclude_entity_ids=("excluded-1",),
+        api_keys=("key-1",),
+        model="model-1",
+    )
+
+    result = await repository.daily_rows(scope, page=3, page_size=2)
+
+    expected_where: Final = {
+        "date": {"gte": "2026-01-01", "lte": "2026-01-31"},
+        entity_field: {"in": ["entity-1"], "not": {"in": ["excluded-1"]}},
+        "model": "model-1",
+        "api_key": {"in": ["key-1"]},
+    }
+    tables: Final = {
+        DailyActivityTable.USER: database.litellm_dailyuserspend,
+        DailyActivityTable.TEAM: database.litellm_dailyteamspend,
+        DailyActivityTable.TAG: database.litellm_dailytagspend,
+        DailyActivityTable.ORGANIZATION: database.litellm_dailyorganizationspend,
+        DailyActivityTable.CUSTOMER: database.litellm_dailyenduserspend,
+        DailyActivityTable.AGENT: database.litellm_dailyagentspend,
+    }
+    selected_table: Final = tables[table]
+
+    assert result.total_count == 0
+    assert result.rows == ()
+    assert selected_table.count_calls == [expected_where]
+    assert selected_table.find_many_calls == [expected_where]
+    assert selected_table.pagination_calls == [(4, 2, ({"date": "desc"}, {"id": "asc"}))]
+    assert sum(len(daily_table.find_many_calls) for daily_table in tables.values()) == 1
 
 
 @pytest.mark.asyncio
