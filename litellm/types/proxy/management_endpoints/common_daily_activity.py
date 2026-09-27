@@ -118,6 +118,26 @@ class SpendAnalyticsPaginatedResponse(BaseModel):
     metadata: DailySpendMetadata = Field(default_factory=DailySpendMetadata)
 
 
+class KeyActivityRow(BaseModel):
+    api_key: str
+    metrics: SpendMetrics
+    metadata: KeyMetadata
+
+
+class DailyActivityKeySearchResponse(BaseModel):
+    api_keys: list[KeyActivityRow]
+
+
+class ModelTopKeysResponse(BaseModel):
+    model: str
+    by_model_group: bool
+    api_keys: list[KeyActivityRow]
+
+
+class CacheLeakageKeysResponse(BaseModel):
+    api_keys: list[KeyActivityRow]
+
+
 class LiteLLM_DailyUserSpend(BaseModel):
     id: str
     user_id: str
