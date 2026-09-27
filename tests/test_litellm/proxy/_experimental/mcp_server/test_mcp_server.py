@@ -11088,7 +11088,9 @@ class TestConnectChallengeResolver:
             )
 
         authenticate: Final = (exc.value.headers or {}).get("WWW-Authenticate") or ""
-        assert authenticate.startswith(f'Bearer resource_metadata="/.well-known/oauth-protected-resource/mcp/{route_name}"')
+        assert authenticate.startswith(
+            f'Bearer resource_metadata="/.well-known/oauth-protected-resource/mcp/{route_name}"'
+        )
 
 
 class TestConnectSignInPreflight:
@@ -11128,7 +11130,8 @@ class TestConnectSignInPreflight:
 
         server = _catalog_server()
         guardrail = _CallerSignInGuardrail(
-            guardrail_name="sign-in-stub", preflight_result=Rejected("the Entra OBO exchange was rejected (AADSTS70002)")
+            guardrail_name="sign-in-stub",
+            preflight_result=Rejected("the Entra OBO exchange was rejected (AADSTS70002)"),
         )
         litellm.logging_callback_manager.add_litellm_callback(guardrail)
         try:
@@ -11151,7 +11154,8 @@ class TestConnectSignInPreflight:
 
         server = _catalog_server()
         guardrail = _CallerSignInGuardrail(
-            guardrail_name="sign-in-stub", preflight_result=Unavailable("the Entra token endpoint could not be reached", fail_open=False)
+            guardrail_name="sign-in-stub",
+            preflight_result=Unavailable("the Entra token endpoint could not be reached", fail_open=False),
         )
         litellm.logging_callback_manager.add_litellm_callback(guardrail)
         try:
