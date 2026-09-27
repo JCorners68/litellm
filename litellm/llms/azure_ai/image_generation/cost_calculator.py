@@ -96,9 +96,11 @@ def _billable_reference_megapixels(model: str, reference_pixels: tuple[int | Non
             return 0
         case (None,):
             verbose_logger.warning(
-                "Could not read the dimensions of the %s reference image, billing it as one megapixel", model
+                "Could not read the dimensions of the %s reference image, billing the %d megapixel maximum",
+                model,
+                MAX_LONE_REFERENCE_MEGAPIXELS,
             )
-            return 1
+            return MAX_LONE_REFERENCE_MEGAPIXELS
         case (int() as lone_reference,):
             return min(_billable_megapixels(lone_reference), MAX_LONE_REFERENCE_MEGAPIXELS)
         case _:

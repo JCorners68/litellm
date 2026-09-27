@@ -390,7 +390,10 @@ def test_flux2_image_edit_rejects_a_text_mode_upload_with_a_clear_error(tmp_path
     path: Final = tmp_path / "reference.png"
     path.write_bytes(_png(1024, 1024))
 
-    with path.open("r", encoding="latin-1") as text_upload, pytest.raises(litellm.BadRequestError, match=r"TextIOWrapper\.read\(\) returned str"):
+    with (
+        path.open("r", encoding="latin-1") as text_upload,
+        pytest.raises(litellm.BadRequestError, match=r"TextIOWrapper\.read\(\) returned str"),
+    ):
         AzureFoundryFlux2ImageEditConfig().transform_image_edit_request(
             model="FLUX.2-flex",
             prompt="Make it a watercolor",
@@ -465,7 +468,7 @@ def test_flux2_image_edit_bills_a_lone_reference_in_whole_megapixels(reference: 
         pytest.param(_png(0, 640), id="zero-width-header"),
     ),
 )
-def test_flux2_image_edit_bills_a_lone_unmeasurable_reference_as_one_megapixel(
+def test_flux2_image_edit_bills_a_lone_unmeasurable_reference_at_the_lone_reference_maximum(
     reference: bytes, litellm_warnings: pytest.LogCaptureFixture
 ):
     response: Final = litellm.image_edit(
@@ -480,7 +483,7 @@ def test_flux2_image_edit_bills_a_lone_unmeasurable_reference_as_one_megapixel(
     rate: Final = _flex_megapixel_rate()
 
     assert response._hidden_params["reference_image_pixels"] == (None,)
-    assert response._hidden_params["response_cost"] == pytest.approx(rate * 1024 * 1024 + rate * 1024 * 1024)
+    assert response._hidden_params["response_cost"] == pytest.approx(rate * 1024 * 1024 + rate * 4 * 1024 * 1024)
     assert "Could not read the dimensions of the azure_ai/FLUX.2-flex reference image" in litellm_warnings.text
 
 

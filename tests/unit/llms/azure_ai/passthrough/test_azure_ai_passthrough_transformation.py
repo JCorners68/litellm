@@ -557,8 +557,8 @@ def _jpeg_b64(width: int, height: int, metadata_segments: int = 0) -> str:
         pytest.param({"input_image": _jpeg_b64(4032, 3024)}, 4, id="lone-photo-capped-at-four-megapixels"),
         pytest.param(
             {"input_image": _jpeg_b64(4032, 3024, metadata_segments=8)},
-            1,
-            id="lone-photo-with-its-frame-header-past-the-scan-limit-as-one-megapixel",
+            4,
+            id="lone-photo-with-its-frame-header-past-the-scan-limit-at-the-lone-reference-maximum",
         ),
         pytest.param(
             {"input_image": "data:image/jpeg;base64," + _jpeg_b64(4032, 3024)}, 4, id="lone-photo-as-a-data-url"
@@ -568,11 +568,17 @@ def _jpeg_b64(width: int, height: int, metadata_segments: int = 0) -> str:
             2,
             id="each-of-several-references-as-one-megapixel",
         ),
-        pytest.param({"input_image": "https://example.com/reference.png"}, 1, id="unmeasurable-url-as-one-megapixel"),
         pytest.param(
-            {"input_image": {"url": "https://example.com/reference.png"}}, 1, id="non-string-reference-as-one-megapixel"
+            {"input_image": "https://example.com/reference.png"}, 4, id="unmeasurable-url-at-the-lone-reference-maximum"
         ),
-        pytest.param({"input_image": "https://example.com/café.png"}, 1, id="non-ascii-url-as-one-megapixel"),
+        pytest.param(
+            {"input_image": {"url": "https://example.com/reference.png"}},
+            4,
+            id="non-string-reference-at-the-lone-reference-maximum",
+        ),
+        pytest.param(
+            {"input_image": "https://example.com/café.png"}, 4, id="non-ascii-url-at-the-lone-reference-maximum"
+        ),
         pytest.param({}, 0, id="generation-without-references"),
         pytest.param({"input_image": None}, 0, id="null-reference-field-is-not-a-reference"),
         pytest.param({"input_image": ""}, 0, id="empty-reference-field-is-not-a-reference"),
