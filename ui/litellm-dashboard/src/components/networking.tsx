@@ -1295,18 +1295,16 @@ export const transformRequestCall = async (accessToken: string, request: object)
 const ENTITY_ID_QUERY_PARAM: Record<DailyActivityEntity, string> = {
   user: "user_id",
   team: "team_ids",
-  tag: "tag_ids",
+  tag: "tags",
   organization: "organization_ids",
-  customer: "customer_ids",
+  customer: "end_user_ids",
   agent: "agent_ids",
 };
 
-const EXCLUDE_ENTITY_ID_QUERY_PARAM: Record<DailyActivityEntity, string> = {
-  user: "exclude_user_id",
+const EXCLUDE_ENTITY_ID_QUERY_PARAM: Partial<Record<DailyActivityEntity, string>> = {
   team: "exclude_team_ids",
-  tag: "exclude_tag_ids",
   organization: "exclude_organization_ids",
-  customer: "exclude_customer_ids",
+  customer: "exclude_end_user_ids",
   agent: "exclude_agent_ids",
 };
 
@@ -1319,16 +1317,18 @@ const dailyActivityQuery = (
   const excludeEntityIds = req.excludeEntityIds;
   const joinedEntityIds = entityIds && entityIds.length > 0 ? entityIds.join(",") : undefined;
   const entityIdValue = entity === "user" ? entityIds?.[0] : joinedEntityIds;
+  const excludeParam = EXCLUDE_ENTITY_ID_QUERY_PARAM[entity];
   return {
     start_date: formatDate(req.startTime),
     end_date: formatDate(req.endTime),
-    timezone: new Date().getTimezoneOffset().toString(),
-    [ENTITY_ID_QUERY_PARAM[entity]]: entityIdValue,
-    [EXCLUDE_ENTITY_ID_QUERY_PARAM[entity]]:
-      excludeEntityIds && excludeEntityIds.length > 0 ? excludeEntityIds.join(",") : undefined,
     model: req.model,
     api_key: req.apiKey,
-    include_current_utc_day: req.includeCurrentUtcDay ? "true" : undefined,
+    [ENTITY_ID_QUERY_PARAM[entity]]: entityIdValue,
+    ...(excludeParam
+      ? { [excludeParam]: excludeEntityIds && excludeEntityIds.length > 0 ? excludeEntityIds.join(",") : undefined }
+      : {}),
+    timezone: new Date().getTimezoneOffset().toString(),
+    include_current_utc_day: entity === "user" && req.includeCurrentUtcDay ? "true" : undefined,
     ...extra,
   };
 };
@@ -1361,7 +1361,7 @@ export const dailyActivityModelTopKeysCall = (
   apiClient.get<ModelTopKeysResponse>(`/${entity}/daily/activity/aggregated/model_top_keys`, {
     accessToken: req.accessToken,
     query: dailyActivityQuery(entity, req, {
-      model,
+      model_group: model,
       by_model_group: byModelGroup ? "true" : "false",
     }),
   });

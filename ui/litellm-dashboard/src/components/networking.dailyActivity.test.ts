@@ -43,9 +43,9 @@ describe("dailyActivityAggregatedCall", () => {
   it.each<[DailyActivityEntity, string]>([
     ["user", "user_id"],
     ["team", "team_ids"],
-    ["tag", "tag_ids"],
+    ["tag", "tags"],
     ["organization", "organization_ids"],
-    ["customer", "customer_ids"],
+    ["customer", "end_user_ids"],
     ["agent", "agent_ids"],
   ])("GETs /%s/daily/activity/aggregated with %s filters", async (entity, param) => {
     const mockFetch = captureFetch();
@@ -73,16 +73,36 @@ describe("dailyActivityAggregatedCall", () => {
     expect(url.searchParams.has("exclude_team_ids")).toBe(false);
   });
 
-  it("sends exclude ids comma-joined under exclude_<entity>_ids", async () => {
+  it.each<[DailyActivityEntity, string]>([
+    ["team", "exclude_team_ids"],
+    ["organization", "exclude_organization_ids"],
+    ["customer", "exclude_end_user_ids"],
+    ["agent", "exclude_agent_ids"],
+  ])("sends exclude ids comma-joined under %s", async (entity, param) => {
     const mockFetch = captureFetch();
 
     await dailyActivityAggregatedCall(
-      "team",
-      req({ entityIds: ["t1"], excludeEntityIds: ["litellm-dashboard", "other"] }),
+      entity,
+      req({ entityIds: ["e1"], excludeEntityIds: ["litellm-dashboard", "other"] }),
     );
 
-    expect(requestedUrl(mockFetch).searchParams.get("exclude_team_ids")).toBe("litellm-dashboard,other");
+    expect(requestedUrl(mockFetch).searchParams.get(param)).toBe("litellm-dashboard,other");
   });
+
+  it.each<[DailyActivityEntity]>([["tag"], ["user"]])(
+    "emits no exclude param for %s",
+    async (entity) => {
+      const mockFetch = captureFetch();
+
+      await dailyActivityAggregatedCall(
+        entity,
+        req({ entityIds: ["e1"], excludeEntityIds: ["litellm-dashboard"] }),
+      );
+
+      const params = [...requestedUrl(mockFetch).searchParams.keys()];
+      expect(params.some((key) => key.startsWith("exclude_"))).toBe(false);
+    },
+  );
 
   it("keeps an empty api_key as a filter rather than widening the read", async () => {
     const mockFetch = captureFetch();
@@ -123,14 +143,14 @@ describe("dailyActivityKeySearchCall", () => {
 });
 
 describe("dailyActivityModelTopKeysCall", () => {
-  it("GETs model_top_keys with model and by_model_group", async () => {
+  it("GETs model_top_keys with model_group and by_model_group", async () => {
     const mockFetch = captureFetch();
 
     await dailyActivityModelTopKeysCall("user", req(), "gpt-4o", true);
 
     const url = requestedUrl(mockFetch);
     expect(url.pathname).toBe("/user/daily/activity/aggregated/model_top_keys");
-    expect(url.searchParams.get("model")).toBe("gpt-4o");
+    expect(url.searchParams.get("model_group")).toBe("gpt-4o");
     expect(url.searchParams.get("by_model_group")).toBe("true");
   });
 

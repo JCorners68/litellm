@@ -13,8 +13,8 @@ describe("exportFilename", () => {
   });
 
   it("falls back to 'all' when a bound is missing", () => {
-    expect(exportFilename("user", "entities", "json", { from: undefined, to: undefined })).toBe(
-      "user_usage_entities_all_all.json",
+    expect(exportFilename("user", "daily_with_users", "json", { from: undefined, to: undefined })).toBe(
+      "user_usage_daily_with_users_all_all.json",
     );
   });
 });

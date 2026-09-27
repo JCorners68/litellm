@@ -11,7 +11,7 @@ import type {
 export type DailyActivityEntity = "user" | "team" | "tag" | "organization" | "customer" | "agent";
 export type DailyActivityAggregatedResponse = components["schemas"]["SpendAnalyticsPaginatedResponse"];
 export type DailyActivityMetadata = components["schemas"]["DailySpendMetadata"];
-export type ExportType = "daily" | "daily_with_keys" | "entities"; // CONTRACT (server ExportType enum)
+export type ExportType = "daily" | "daily_with_keys" | "daily_with_models" | "daily_with_users"; // CONTRACT (server ExportType enum)
 export type ExportFormat = "csv" | "json";
 
 // CONTRACT: until gen:api, local interfaces. Swap to components["schemas"][...] once the schema has them.
@@ -25,6 +25,8 @@ export interface DailyActivityKeySearchResponse {
 }
 export interface ModelTopKeysResponse {
   api_keys: KeyActivityRow[];
+  model: string;
+  by_model_group: boolean;
 }
 export interface CacheLeakageKeysResponse {
   api_keys: KeyActivityRow[];
