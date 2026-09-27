@@ -1,10 +1,11 @@
-"""The e2e step log: what `@step` records, and how it attaches to a JUnit item.
+"""The e2e step recorder's edge cases: dedupe, the cap, nesting, context managers.
 
 Harness logic, so it lives here rather than under tests/e2e, which holds only
 tests that drive a live proxy. The harness modules are imported off
-``-o pythonpath=tests/e2e``, the way CI's provider_replay_harness job runs this
-file. test_e2e_junit_report.py pins what reaches the XML through the real
-conftest.
+``PYTHONPATH=tests/e2e``, the way the Code Quality workflow's
+test_e2e_metadata step runs this file. Call order, the failing test's last step,
+the per-test reset and the JUnit attach are pinned end to end in
+test_e2e_junit_report.py.
 """
 
 from __future__ import annotations
@@ -16,8 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from e2e_metadata import MAX_STEPS, STEP_FRAMES, STEPS, step, step_properties
-from junit_properties import attach_result_properties, attach_step_properties
+from e2e_metadata import MAX_STEPS, STEP_FRAMES, STEPS, step
 
 
 @pytest.fixture(autouse=True)
@@ -29,11 +29,6 @@ def empty_step_log() -> Generator[None]:
     STEPS.reset()
 
 
-def collected_item(request: pytest.FixtureRequest, name: str) -> pytest.Item:
-    """The Item pytest collected for test ``name`` in this file, as pytest built it."""
-    return next(item for item in request.session.items if item.path == request.path and item.name == name)
-
-
 class TestStepRecording:
     """`@step`-decorated harness helpers append to the running test's story as
     they execute.
@@ -42,19 +37,6 @@ class TestStepRecording:
     recorder first, the same reset conftest's `pytest_runtest_setup` gives every
     live test.
     """
-
-    def test_steps_land_in_call_order(self) -> None:
-        @step("register deployment")
-        def register() -> str:
-            return "model-id"
-
-        @step("generate virtual key")
-        def generate() -> str:
-            return "sk-x"
-
-        _ = register()
-        _ = generate()
-        assert STEPS.taken() == ("register deployment", "generate virtual key")
 
     def test_a_decorated_helper_still_returns_exactly_what_it_did(self) -> None:
         """`@step` records, it does not intercept: arguments, return value and
@@ -67,24 +49,6 @@ class TestStepRecording:
 
         assert chat("sk-x", model="gpt-5.5") == "sk-x:gpt-5.5"
         assert chat.__name__ == "chat"
-
-    def test_a_helper_that_raises_leaves_its_own_label_last(self) -> None:
-        """The whole point of the field. The label is recorded BEFORE the call, so
-        a test that dies inside a helper keeps a partial story whose last element
-        names the helper it died in."""
-
-        @step("generate virtual key")
-        def generate() -> str:
-            return "sk-x"
-
-        @step("POST /chat/completions")
-        def chat() -> None:
-            raise RuntimeError("502 from upstream")
-
-        _ = generate()
-        with pytest.raises(RuntimeError, match="502 from upstream"):
-            chat()
-        assert STEPS.taken() == ("generate virtual key", "POST /chat/completions")
 
     def test_a_poll_loop_is_one_step_in_the_story_not_fifty(self) -> None:
         @step("poll /spend/logs for the request id")
@@ -125,22 +89,6 @@ class TestStepRecording:
         STEPS.record("  POST   /chat/completions\n  ")
         STEPS.record("   ")
         assert STEPS.taken() == ("POST /chat/completions",)
-
-    def test_reset_empties_the_log_so_one_test_never_inherits_another_s(self) -> None:
-        STEPS.record("register deployment")
-        STEPS.reset()
-        assert STEPS.taken() == ()
-        assert step_properties() == ()
-
-    def test_steps_serialize_as_repeated_properties_in_order(self) -> None:
-        """Repeated rather than joined on a delimiter: the labels are free text, so
-        no separator can be reserved, and a repeated property has none to corrupt."""
-        STEPS.record('attach guardrail, comma & "quoted" <tag>')
-        STEPS.record("POST /chat/completions")
-        assert step_properties() == (
-            ("step", 'attach guardrail, comma & "quoted" <tag>'),
-            ("step", "POST /chat/completions"),
-        )
 
     def test_a_decorated_helper_warns_at_its_caller_with_step_frames(self) -> None:
         """`stacklevel` counts frames, and the wrapper is one of them: a cleanup
@@ -307,35 +255,3 @@ class TestContextManagerSteps:
 
         with pytest.raises(TypeError, match="cannot wrap the generator function"):
             _ = step("poll /spend/logs")(rows)
-
-
-class TestAttachStepProperties:
-    def test_steps_are_appended_after_the_collected_properties(self, request: pytest.FixtureRequest) -> None:
-        """Order inside `<properties>` is list order, so the story reads after the
-        fixed prefix the collection hook already attached."""
-        test = type(self).test_steps_are_appended_after_the_collected_properties
-        item = collected_item(request, test.__name__)
-        attach_result_properties(item)
-        STEPS.record("register deployment")
-        STEPS.record("POST /chat/completions")
-        attach_step_properties(item)
-        assert [name for name, _ in item.user_properties] == ["package", "covers", "source", "step", "step"]
-        assert [value for name, value in item.user_properties if name == "step"] == [
-            "register deployment",
-            "POST /chat/completions",
-        ]
-
-    def test_a_rerun_replaces_the_story_rather_than_appending_a_second_one(
-        self, request: pytest.FixtureRequest
-    ) -> None:
-        """The suite runs with `--reruns 1`. Without this the retry's steps would
-        queue up behind the first attempt's and the report would read as one test
-        that did everything twice."""
-        test = type(self).test_a_rerun_replaces_the_story_rather_than_appending_a_second_one
-        item = collected_item(request, test.__name__)
-        STEPS.record("attempt one died here")
-        attach_step_properties(item)
-        STEPS.reset()
-        STEPS.record("attempt two got further")
-        attach_step_properties(item)
-        assert [value for name, value in item.user_properties if name == "step"] == ["attempt two got further"]
