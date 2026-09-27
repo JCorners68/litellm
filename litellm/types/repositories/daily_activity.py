@@ -1,12 +1,12 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 from types import MappingProxyType
 from typing import Protocol, TypeAlias
 
 
-class DailyActivityTable(StrEnum):
+class DailyActivityTable(str, Enum):
     USER = "litellm_dailyuserspend"
     TEAM = "litellm_dailyteamspend"
     TAG = "litellm_dailytagspend"
@@ -70,7 +70,7 @@ class KeyMetadataRow:
     tags: tuple[str, ...]
 
 
-class ExportType(StrEnum):
+class ExportType(str, Enum):
     DAILY = "daily"
     DAILY_WITH_KEYS = "daily_with_keys"
     DAILY_WITH_MODELS = "daily_with_models"
@@ -164,12 +164,6 @@ class DailyActivityRow(Protocol):
     custom_llm_provider: str | None
     mcp_namespaced_tool_name: str | None
     endpoint: str | None
-    user_id: str | None
-    team_id: str | None
-    tag: str | None
-    organization_id: str | None
-    end_user_id: str | None
-    agent_id: str | None
     prompt_tokens: int
     completion_tokens: int
     cache_read_input_tokens: int
@@ -185,7 +179,6 @@ class DailyActivityRow(Protocol):
     failed_requests: int
     total_response_time_ms: int
     timed_requests: int
-    ptu_flat_cost: float
 
 
 @dataclass(frozen=True, slots=True)

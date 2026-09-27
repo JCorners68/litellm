@@ -22,6 +22,7 @@ from litellm.constants import (
     DAILY_GLOBAL_SPEND_RECONCILE_JOB_ID,
     DAILY_GLOBAL_SPEND_RECONCILE_LOCK_TTL_SECONDS,
     DAILY_GLOBAL_SPEND_RECONCILED_THROUGH_PARAM,
+    GLOBAL_SPEND_TABLE_NAME,
 )
 
 if TYPE_CHECKING:
@@ -29,7 +30,6 @@ if TYPE_CHECKING:
     from litellm.proxy.db.db_transaction_queue.pod_lock_manager import PodLockManager
     from litellm.proxy.utils import PrismaClient
 
-GLOBAL_SPEND_TABLE_NAME: Final = "LiteLLM_DailyGlobalSpend"
 # The unique constraint, in constraint order. NULL never matches itself in a unique index, so
 # every column is normalized to '' or the same group would be inserted again on every run.
 _KEY_COLUMNS: Final = ("date", "model", "model_group", "custom_llm_provider", "mcp_namespaced_tool_name", "endpoint")

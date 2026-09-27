@@ -11,6 +11,7 @@ import pytest
 from psycopg.rows import dict_row
 from pytest_postgresql import factories
 
+import litellm.proxy.management_endpoints.common_daily_activity as common_daily_activity_module
 from litellm.constants import (
     DAILY_GLOBAL_SPEND_RECONCILED_THROUGH_PARAM,
     PTU_SENTINEL_API_KEY,
@@ -18,6 +19,7 @@ from litellm.constants import (
 )
 from litellm.proxy.management_endpoints.common_daily_activity import (
     _is_user_agent_tag,
+    _ProxyDailyActivityReads,
     _record_to_spend_metrics,
     daily_activity_repository,
     daily_activity_scope,
@@ -36,7 +38,7 @@ from litellm.types.proxy.management_endpoints.common_daily_activity import (
     SpendAnalyticsPaginatedResponse,
     SpendMetrics,
 )
-from litellm.types.repositories.daily_activity import GroupingSetsRow
+from litellm.types.repositories.daily_activity import GroupingSetsRow, KeyMetadataRow
 
 
 async def _run_aggregated_daily_activity(
@@ -404,6 +406,49 @@ async def test_get_api_key_metadata_returns_active_key_metadata():
 
 
 @pytest.mark.asyncio
+async def test_recovered_key_metadata_preserves_resolved_tags_after_user_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved: Final = KeyMetadataRow(
+        api_key="key-hash",
+        key_alias="key alias",
+        team_id="team-id",
+        user_id="user-id",
+        user_email=None,
+        key_exists=True,
+        tags=("production", "internal"),
+    )
+    attach_details: Final = AsyncMock(
+        return_value={
+            "key-hash": {
+                "key_alias": "key alias",
+                "team_id": "team-id",
+                "user_id": "user-id",
+                "user_email": "user@example.com",
+                "key_exists": True,
+            }
+        }
+    )
+    monkeypatch.setattr(common_daily_activity_module, "attach_user_details", attach_details)
+    reads: Final = _ProxyDailyActivityReads(MagicMock())
+
+    result: Final = await reads.recover_key_metadata({"key-hash": resolved}, frozenset(("key-hash",)), None)
+
+    assert result == {
+        "key-hash": KeyMetadataRow(
+            api_key="key-hash",
+            key_alias="key alias",
+            team_id="team-id",
+            user_id="user-id",
+            user_email="user@example.com",
+            key_exists=True,
+            tags=("production", "internal"),
+        )
+    }
+    attach_details.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_get_api_key_metadata_falls_back_to_deleted_keys():
     """Test that get_api_key_metadata should fall back to deleted keys table for missing keys."""
     mock_prisma = MagicMock()
@@ -701,12 +746,15 @@ def test_key_metadata_includes_recovered_user_email():
 
     meta = _key_metadata(
         {
-            "dirty-key": {
-                "key_alias": "batch-worker",
-                "team_id": "team-1",
-                "user_id": "alice",
-                "user_email": "alice@example.com",
-            }
+            "dirty-key": KeyMetadataRow(
+                api_key="dirty-key",
+                key_alias="batch-worker",
+                team_id="team-1",
+                user_id="alice",
+                user_email="alice@example.com",
+                key_exists=True,
+                tags=(),
+            )
         },
         "dirty-key",
     )
@@ -721,11 +769,15 @@ def test_key_metadata_includes_user_id_without_user_email():
 
     meta = _key_metadata(
         {
-            "dirty-key": {
-                "key_alias": "batch-worker",
-                "team_id": "team-1",
-                "user_id": "user-123",
-            }
+            "dirty-key": KeyMetadataRow(
+                api_key="dirty-key",
+                key_alias="batch-worker",
+                team_id="team-1",
+                user_id="user-123",
+                user_email=None,
+                key_exists=True,
+                tags=(),
+            )
         },
         "dirty-key",
     )
@@ -766,11 +818,15 @@ def test_update_breakdown_metrics_includes_user_email():
         user_id="alice",
     )
     api_key_metadata = {
-        "dirty-key": {
-            "key_alias": "batch-worker",
-            "team_id": "team-1",
-            "user_email": "alice@example.com",
-        }
+        "dirty-key": KeyMetadataRow(
+            api_key="dirty-key",
+            key_alias="batch-worker",
+            team_id="team-1",
+            user_id=None,
+            user_email="alice@example.com",
+            key_exists=True,
+            tags=(),
+        )
     }
 
     update_breakdown_metrics(

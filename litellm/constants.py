@@ -2153,6 +2153,7 @@ PTU_LAPSED_ALERT_LIMIT: Final[int] = 10
 DAILY_GLOBAL_SPEND_RECONCILE_JOB_ID: Final[str] = "daily_global_spend_reconcile_job"
 DAILY_GLOBAL_SPEND_RECONCILE_LOCK_TTL_SECONDS: Final[int] = 3600
 DAILY_GLOBAL_SPEND_RECONCILED_THROUGH_PARAM: Final[str] = "daily_global_spend_reconciled_through"
+GLOBAL_SPEND_TABLE_NAME: Final[str] = "LiteLLM_DailyGlobalSpend"
 SPEND_CAPTURE_RATE_CHECK_JOB_ID: Final[str] = "spend_capture_rate_check_job"
 SPEND_CAPTURE_RATE_CHECK_LOCK_TTL_SECONDS: Final[int] = 900
 SPEND_CAPTURE_RATE_MAX_RANGE_DAYS: Final[int] = 180

@@ -1,14 +1,14 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import count, islice
 from types import MappingProxyType
 from typing import Final
 
 from litellm import constants
-from litellm.constants import PTU_SENTINEL_API_KEY
+from litellm.constants import GLOBAL_SPEND_TABLE_NAME, PTU_SENTINEL_API_KEY
 from litellm.types.repositories.daily_activity import DailyActivityScope, DailyActivityTable, ExportType
 
-GLOBAL_SPEND_TABLE_NAME: Final = "LiteLLM_DailyGlobalSpend"
 _API_KEY_ROLLED_UP_BIT: Final = 32
 _MODEL_GROUP_EXPR: Final = "COALESCE(NULLIF(model_group, ''), model)"
 _KEY_FREE_SOURCE_COLUMNS: Final = (
@@ -333,13 +333,8 @@ def build_export_sql(
 ) -> SqlQuery:
     _bounded_limit(batch_size)
     where_clause, where_params = build_where_clause(scope)
-    sentinel_param: Final = len(where_params) + 1
     group_key, output_key, user_fields, type_joins = _export_grouping(export_type)
     grouping_keys: Final = (
-        f"scoped.date, COALESCE(scoped.\"{scope.entity_id_field}\", '')",
-        *((group_key,) if export_type is not ExportType.DAILY else ()),
-    )
-    order_keys: Final = (
         f"scoped.date, COALESCE(scoped.\"{scope.entity_id_field}\", '')",
         *((group_key,) if export_type is not ExportType.DAILY else ()),
     )
@@ -358,10 +353,14 @@ def build_export_sql(
         if scope.table is DailyActivityTable.ORGANIZATION
         else "NULL::text"
     )
+    parameter_indexes: Final = count(len(where_params) + 1)
+    sentinel_param: Final = next(parameter_indexes) if export_type is not ExportType.DAILY else None
+    cursor_indexes: Final = tuple(islice(parameter_indexes, 3)) if after is not None else ()
+    limit_param: Final = next(parameter_indexes)
     cursor_clause, cursor_params = _export_cursor_clause(
-        scope, export_type=export_type, after=after, where_params_count=len(where_params), group_key=group_key
+        scope, after=after, cursor_indexes=cursor_indexes, group_key=group_key
     )
-    sentinel_clause: Final = f" AND api_key <> ${sentinel_param}" if export_type is not ExportType.DAILY else ""
+    sentinel_clause: Final = f" AND api_key <> ${sentinel_param}" if sentinel_param is not None else ""
     table: Final = PRISMA_TO_PG_TABLE[scope.table]
     flat_cost: Final = _ptu_flat_cost_select(scope.table, aggregate=False)
     sql: Final = f"""
@@ -389,8 +388,8 @@ def build_export_sql(
         {" ".join(joins)}
         WHERE TRUE{cursor_clause}
         GROUP BY {", ".join(grouping_keys)}
-        ORDER BY {", ".join(order_keys)}
-        LIMIT ${len(where_params) + (2 if export_type is not ExportType.DAILY else 1) + (3 if after is not None else 0)}
+        ORDER BY {", ".join(grouping_keys)}
+        LIMIT ${limit_param}
     """
     return SqlQuery(
         sql=sql,
@@ -444,16 +443,15 @@ def _export_grouping(export_type: ExportType) -> tuple[str, str, str, tuple[str,
 def _export_cursor_clause(
     scope: DailyActivityScope,
     *,
-    export_type: ExportType,
     after: ExportCursor | None,
-    where_params_count: int,
+    cursor_indexes: tuple[int, ...],
     group_key: str,
 ) -> tuple[str, tuple[object, ...]]:
     if after is None:
         return "", ()
-    cursor_start: Final = where_params_count + (2 if export_type is not ExportType.DAILY else 1)
+    first_cursor_index: Final = cursor_indexes[0]
     clause: Final = (
         f""" AND (scoped.date, COALESCE(scoped."{scope.entity_id_field}", ''), {group_key}) """
-        f"> (${cursor_start}, ${cursor_start + 1}, ${cursor_start + 2})"
+        f"> (${first_cursor_index}, ${cursor_indexes[1]}, ${cursor_indexes[2]})"
     )
     return clause, (after.date, after.entity_id, after.group_key)
