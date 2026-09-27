@@ -69,8 +69,8 @@ const ModelTopKeys = ({
         setRows(
           response.api_keys.map((row) => ({
             api_key: row.api_key,
-            key_alias: row.metadata.key_alias,
-            team_id: row.metadata.team_id,
+            key_alias: row.metadata.key_alias ?? null,
+            team_id: row.metadata.team_id ?? null,
             spend: row.metrics.spend,
             requests: row.metrics.api_requests,
             tokens: row.metrics.total_tokens,

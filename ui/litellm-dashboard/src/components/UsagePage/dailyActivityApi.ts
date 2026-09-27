@@ -5,7 +5,6 @@ import type {
   KeyMetadata,
   KeyMetricWithMetadata,
   MetricWithMetadata,
-  SpendMetrics,
 } from "./types";
 
 export type DailyActivityEntity = "user" | "team" | "tag" | "organization" | "customer" | "agent";
@@ -14,23 +13,10 @@ export type DailyActivityMetadata = components["schemas"]["DailySpendMetadata"];
 export type ExportType = "daily" | "daily_with_keys" | "daily_with_models" | "daily_with_users"; // CONTRACT (server ExportType enum)
 export type ExportFormat = "csv" | "json";
 
-// CONTRACT: until gen:api, local interfaces. Swap to components["schemas"][...] once the schema has them.
-export interface KeyActivityRow {
-  api_key: string;
-  metrics: SpendMetrics;
-  metadata: KeyMetadata;
-}
-export interface DailyActivityKeySearchResponse {
-  api_keys: KeyActivityRow[];
-}
-export interface ModelTopKeysResponse {
-  api_keys: KeyActivityRow[];
-  model: string;
-  by_model_group: boolean;
-}
-export interface CacheLeakageKeysResponse {
-  api_keys: KeyActivityRow[];
-}
+export type KeyActivityRow = components["schemas"]["KeyActivityRow"];
+export type DailyActivityKeySearchResponse = components["schemas"]["DailyActivityKeySearchResponse"];
+export type ModelTopKeysResponse = components["schemas"]["ModelTopKeysResponse"];
+export type CacheLeakageKeysResponse = components["schemas"]["CacheLeakageKeysResponse"];
 
 export interface DailyActivityRequest {
   accessToken: string;
@@ -76,13 +62,17 @@ type SchemaKeyMetricWithMetadata = components["schemas"]["KeyMetricWithMetadata"
 
 const toKeyMetric = (entry: SchemaKeyMetricWithMetadata): KeyMetricWithMetadata => ({
   metrics: entry.metrics,
-  metadata: {
-    key_alias: entry.metadata?.key_alias ?? null,
-    team_id: entry.metadata?.team_id ?? null,
-    user_id: entry.metadata?.user_id,
-    user_email: entry.metadata?.user_email,
-    key_exists: entry.metadata?.key_exists,
-  },
+  metadata: toKeyMetadata(entry.metadata),
+});
+
+export const toKeyMetadata = (
+  metadata: components["schemas"]["KeyMetadata"] | undefined,
+): KeyMetadata => ({
+  key_alias: metadata?.key_alias ?? null,
+  team_id: metadata?.team_id ?? null,
+  user_id: metadata?.user_id,
+  user_email: metadata?.user_email,
+  key_exists: metadata?.key_exists,
 });
 
 const toMetric = (entry: SchemaMetricWithMetadata): MetricWithMetadata => ({

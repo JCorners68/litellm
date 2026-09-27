@@ -1,5 +1,5 @@
 import type { Team } from "@/components/key_team_helpers/key_list";
-import type { KeyActivityRow } from "../dailyActivityApi";
+import { toKeyMetadata, type KeyActivityRow } from "../dailyActivityApi";
 import { formatKeyLabel } from "@/components/activity_metrics";
 import type { ModelActivityData } from "../types";
 
@@ -9,9 +9,10 @@ export const keyActivityRowsToMetrics = (
 ): Record<string, ModelActivityData> =>
   Object.fromEntries(
     rows.map((row) => {
+      const metadata = toKeyMetadata(row.metadata);
       const metrics: ModelActivityData = {
-        label: formatKeyLabel({ metrics: row.metrics, metadata: row.metadata }, row.api_key, teams),
-        key_metadata: row.metadata,
+        label: formatKeyLabel({ metrics: row.metrics, metadata }, row.api_key, teams),
+        key_metadata: metadata,
         total_requests: row.metrics.api_requests,
         total_successful_requests: row.metrics.successful_requests,
         total_failed_requests: row.metrics.failed_requests,

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { components } from "@/lib/http/schema";
 import type { KeyActivityRow } from "@/components/UsagePage/dailyActivityApi";
 import { EMPTY_DAILY_ACTIVITY_METADATA } from "@/components/UsagePage/dailyActivityApi";
 import type { DailyData, SpendMetrics } from "@/components/UsagePage/types";
@@ -19,8 +20,9 @@ vi.mock("@/components/shared/advanced_date_picker", () => ({
 
 import CacheLeakageCard from "./CacheLeakageCard";
 
-const baseMetrics = (overrides: Partial<SpendMetrics>): SpendMetrics => ({
+const baseMetrics = (overrides: Partial<SpendMetrics>): components["schemas"]["SpendMetrics"] => ({
   spend: 0,
+  flat_cost: 0,
   prompt_tokens: 0,
   completion_tokens: 0,
   total_tokens: 0,
@@ -29,6 +31,13 @@ const baseMetrics = (overrides: Partial<SpendMetrics>): SpendMetrics => ({
   failed_requests: 0,
   cache_read_input_tokens: 0,
   cache_creation_input_tokens: 0,
+  compression_saved_tokens: 0,
+  compression_savings_spend: 0,
+  prompt_caching_savings_spend: 0,
+  gateway_injected_caching_savings_spend: 0,
+  autorouter_savings_spend: 0,
+  total_response_time_ms: 0,
+  timed_requests: 0,
   ...overrides,
 });
 
