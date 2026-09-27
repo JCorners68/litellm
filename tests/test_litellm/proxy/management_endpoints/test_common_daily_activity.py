@@ -2725,17 +2725,17 @@ async def test_get_api_key_metadata_resolves_session_key_via_spend_log_window():
 
 
 def test_spend_logs_window_pads_min_minus_one_day_and_max_plus_two_days():
-    from litellm.proxy.management_endpoints.common_daily_activity import _spend_logs_window
+    from litellm.proxy.management_endpoints.common_daily_activity import spend_logs_window
 
-    window = _spend_logs_window({"2026-09-08", "2026-09-05", "not-a-date"})
+    window = spend_logs_window({"2026-09-08", "2026-09-05", "not-a-date"})
 
     assert window == (datetime(2026, 9, 4), datetime(2026, 9, 10))
 
 
 def test_spend_logs_window_is_none_when_no_date_parses():
-    from litellm.proxy.management_endpoints.common_daily_activity import _spend_logs_window
+    from litellm.proxy.management_endpoints.common_daily_activity import spend_logs_window
 
-    assert _spend_logs_window({"garbage", ""}) is None
+    assert spend_logs_window({"garbage", ""}) is None
 
 
 @pytest.mark.asyncio

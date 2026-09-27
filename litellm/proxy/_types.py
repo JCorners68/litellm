@@ -677,6 +677,9 @@ class LiteLLMRoutes(enum.Enum):
         KeyManagementRoutes.TEAM_KEY_BULK_UPDATE.value,
         KeyManagementRoutes.TEAM_DAILY_ACTIVITY.value,
         KeyManagementRoutes.TEAM_DAILY_ACTIVITY_AGGREGATED.value,
+        "/team/daily/activity/aggregated/search",
+        "/team/daily/activity/aggregated/model_top_keys",
+        "/team/daily/activity/export",
         KeyManagementRoutes.SPEND_LOGS.value,
         KeyManagementRoutes.SPEND_LOGS_V2.value,
         KeyManagementRoutes.KEY_RESET_SPEND.value,
@@ -703,6 +706,10 @@ class LiteLLMRoutes(enum.Enum):
             "/user/list",
             "/user/daily/activity",
             "/user/daily/activity/aggregated",
+            "/user/daily/activity/aggregated/search",
+            "/user/daily/activity/aggregated/model_top_keys",
+            "/user/daily/activity/export",
+            "/user/daily/activity/aggregated/cache_leakage_keys",
             # team
             "/team/new",
             "/team/update",
@@ -720,6 +727,9 @@ class LiteLLMRoutes(enum.Enum):
             "/team/permissions_bulk_update",
             "/team/daily/activity",
             "/team/daily/activity/aggregated",
+            "/team/daily/activity/aggregated/search",
+            "/team/daily/activity/aggregated/model_top_keys",
+            "/team/daily/activity/export",
             "/team/spend/by_user",
             # gateway request counts (SGR); deployment-wide, admin-only
             "/gateway/daily/activity",
@@ -848,6 +858,10 @@ class LiteLLMRoutes(enum.Enum):
             # Tag usage endpoints scope internal users to tags produced by
             # their own keys in tag_management_endpoints.py.
             "/tag/daily/activity",
+            "/tag/daily/activity/aggregated",
+            "/tag/daily/activity/aggregated/search",
+            "/tag/daily/activity/aggregated/model_top_keys",
+            "/tag/daily/activity/export",
             "/tag/list",
             "/v1/models/{model_id}",
             "/models/{model_id}",
@@ -872,6 +886,10 @@ class LiteLLMRoutes(enum.Enum):
             # Tag usage endpoints scope internal viewers to tags produced by
             # their own keys in tag_management_endpoints.py.
             "/tag/daily/activity",
+            "/tag/daily/activity/aggregated",
+            "/tag/daily/activity/aggregated/search",
+            "/tag/daily/activity/aggregated/model_top_keys",
+            "/tag/daily/activity/export",
             "/tag/list",
         ]
     )
@@ -891,6 +909,9 @@ class LiteLLMRoutes(enum.Enum):
         "/team/permissions_update",
         "/team/daily/activity",
         "/team/daily/activity/aggregated",
+        "/team/daily/activity/aggregated/search",
+        "/team/daily/activity/aggregated/model_top_keys",
+        "/team/daily/activity/export",
         "/team/spend/by_user",
         "/team/{team_id}/members/me",
         # POST/GET the team's logging callbacks, and DELETE one of them. Every
@@ -906,9 +927,17 @@ class LiteLLMRoutes(enum.Enum):
         "/model/delete",
         "/user/daily/activity",
         "/user/daily/activity/aggregated",
+        "/user/daily/activity/aggregated/search",
+        "/user/daily/activity/aggregated/model_top_keys",
+        "/user/daily/activity/export",
+        "/user/daily/activity/aggregated/cache_leakage_keys",
         # Endpoint restricts results to organizations the caller is ORG_ADMIN
         # of; a caller who administers none gets an empty result set.
         "/organization/daily/activity",
+        "/organization/daily/activity/aggregated",
+        "/organization/daily/activity/aggregated/search",
+        "/organization/daily/activity/aggregated/model_top_keys",
+        "/organization/daily/activity/export",
         "/user/available_roles",  # read-only role metadata; any authenticated user may read
         # Claude Code gateway: the signed-in CLI fetches its managed settings and posts its own telemetry
         "/claude_code_gateway/managed/settings",
@@ -987,9 +1016,21 @@ class LiteLLMRoutes(enum.Enum):
             "/user/available_users",
             "/user/available_roles",
             "/user/daily/activity",
+            "/user/daily/activity/aggregated",
+            "/user/daily/activity/aggregated/search",
+            "/user/daily/activity/aggregated/model_top_keys",
+            "/user/daily/activity/export",
+            "/user/daily/activity/aggregated/cache_leakage_keys",
             "/team/daily/activity",
             "/team/daily/activity/aggregated",
+            "/team/daily/activity/aggregated/search",
+            "/team/daily/activity/aggregated/model_top_keys",
+            "/team/daily/activity/export",
             "/tag/daily/activity",
+            "/tag/daily/activity/aggregated",
+            "/tag/daily/activity/aggregated/search",
+            "/tag/daily/activity/aggregated/model_top_keys",
+            "/tag/daily/activity/export",
             "/tag/list",
             "/audit",
             "/audit/{id}",
