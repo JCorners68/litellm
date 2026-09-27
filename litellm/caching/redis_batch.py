@@ -201,7 +201,7 @@ class _Set(_Op[None]):
         pipe.set(
             self._redis_cache.check_and_fix_namespace(key=self._key),
             json.dumps(self._value),
-            ex=None if ttl is None else timedelta(seconds=ttl),  # pyright: ignore[reportUnknownArgumentType]
+            ex=None if ttl is None else timedelta(seconds=ttl),
         )
         return 1
 

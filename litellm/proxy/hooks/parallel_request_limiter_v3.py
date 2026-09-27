@@ -440,7 +440,7 @@ def _as_counter_values(reply: object) -> list[CacheCounterValue]:
     values: Final[list[CacheCounterValue]] = []
     for value in reply:  # pyright: ignore[reportUnknownVariableType]  # raw Redis reply
         if not isinstance(value, (int, float, str, bytes)):
-            raise TypeError(f"rate limiter script reply holds {type(value).__name__}")  # pyright: ignore[reportUnknownArgumentType]
+            raise TypeError(f"rate limiter script reply holds {type(value).__name__}")  # pyright: ignore[reportUnknownArgumentType]  # raw Redis reply
         values.append(value)
     return values
 

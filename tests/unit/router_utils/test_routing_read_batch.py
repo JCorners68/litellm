@@ -62,9 +62,7 @@ async def test_usage_based_routing_reads_cooldowns_and_counters_in_one_redis_rou
     redis = _redis_answering({})
     router = _router(redis, "usage-based-routing-v2")
 
-    deployment = await router.async_get_available_deployment(
-        model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES
-    )
+    deployment = await router.async_get_available_deployment(model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES)
 
     assert deployment["model_info"]["id"] in {"dep-a", "dep-b"}
     assert _redis_key_families(redis) == [
@@ -120,9 +118,7 @@ async def test_batched_read_still_excludes_a_cooled_down_deployment():
     )
     router = _router(redis, "usage-based-routing-v2")
 
-    deployment = await router.async_get_available_deployment(
-        model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES
-    )
+    deployment = await router.async_get_available_deployment(model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES)
 
     assert deployment["model_info"]["id"] == "dep-a", "dep-b has the lowest tpm but is cooling down"
     assert redis.async_batch_get_cache.await_count == 1
@@ -139,9 +135,7 @@ async def test_batched_read_ignores_an_expired_cooldown():
     )
     router = _router(redis, "usage-based-routing-v2")
 
-    deployment = await router.async_get_available_deployment(
-        model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES
-    )
+    deployment = await router.async_get_available_deployment(model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES)
 
     assert deployment["model_info"]["id"] == "dep-b"
 
@@ -171,8 +165,17 @@ async def test_a_failed_batched_read_leaves_simple_shuffle_routing():
     redis.async_batch_get_cache = AsyncMock(side_effect=ConnectionError("redis unavailable"))
     router = _router(redis, "simple-shuffle")
 
-    deployment = await router.async_get_available_deployment(
-        model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES
-    )
+    deployment = await router.async_get_available_deployment(model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES)
 
     assert deployment["model_info"]["id"] in {"dep-a", "dep-b"}
+
+
+@pytest.mark.asyncio
+async def test_arming_the_prefetch_outside_a_request_scope_leaves_the_single_batched_read_in_place():
+    redis = _redis_answering({})
+    router = _router(redis, "usage-based-routing-v2")
+
+    router.arm_routing_read_prefetch(_MODEL_GROUP, {})
+    await router.async_get_available_deployment(model=_MODEL_GROUP, request_kwargs={}, messages=_MESSAGES)
+
+    assert len(_redis_key_families(redis)) == 1, "no request scope: routing reads once, on its own, as before"

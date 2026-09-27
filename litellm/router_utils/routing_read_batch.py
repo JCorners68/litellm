@@ -146,5 +146,5 @@ class RoutingReadBatch:
         results: Final[list[list[object | None] | None]] = []
         for cache, keys in reads:
             pending = await cache._prepare_batch_get(keys, local_only=True)  # pyright: ignore[reportPrivateUsage]  # same two-step read as async_batch_get_cache_shared
-            results.append(await cache._apply_batch_get(pending, {key: values.get(key) for key in keys}))  # pyright: ignore[reportPrivateUsage]
+            results.append(await cache._apply_batch_get(pending, {key: values.get(key) for key in keys}))  # pyright: ignore[reportPrivateUsage]  # same two-step read as async_batch_get_cache_shared
         return results
