@@ -2,6 +2,7 @@ import asyncio
 import base64
 import copy
 import json
+import threading
 from typing import Final
 
 import httpx
@@ -17,6 +18,7 @@ from litellm.llms.gemini.count_tokens.transformation import (
     GeminiCountTokensPayload,
     build_count_tokens_payload,
 )
+from litellm.llms.vertex_ai.gemini import transformation as gemini_transformation
 
 _GEMINI_REPLY: Final = {
     "candidates": [{"content": {"parts": [{"text": "ok"}], "role": "model"}, "finishReason": "STOP"}],
@@ -663,3 +665,37 @@ async def test_remote_image_is_fetched_without_blocking_the_event_loop(monkeypat
     assert isinstance(payload, GeminiCountTokensPayload), payload
     assert payload.contents[0]["parts"][1]["inline_data"]["data"] == _PNG
     assert ticks_while_fetching and ticks_while_fetching[0] >= 10, ticks_while_fetching
+
+
+_EXTENSIONLESS_GS_URI: Final = "gs://private-bucket/uploads/cat"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message_format", "image_block"),
+    (
+        pytest.param(
+            "anthropic", {"type": "image", "source": {"type": "url", "url": _EXTENSIONLESS_GS_URI}}, id="anthropic"
+        ),
+        pytest.param("openai", {"type": "image_url", "image_url": {"url": _EXTENSIONLESS_GS_URI}}, id="openai"),
+    ),
+)
+async def test_gcs_metadata_lookup_runs_off_the_event_loop(monkeypatch, message_format, image_block):
+    lookup_threads: list[int] = []  # mutable-ok: the fake GCS lookup records the thread it ran on
+
+    def lookup(image_url: str, vertex_project: str | None = None, vertex_credentials: object = None) -> str:
+        lookup_threads.append(threading.get_ident())
+        return "image/png"
+
+    monkeypatch.setattr(gemini_transformation, "_get_gcs_object_content_type", lookup)
+
+    payload = await build_count_tokens_payload(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": [{"type": "text", "text": "describe"}, image_block]}],
+        system=None,
+        tools=None,
+        message_format=message_format,
+    )
+
+    assert payload.contents[0]["parts"][1]["file_data"]["file_uri"] == _EXTENSIONLESS_GS_URI
+    assert lookup_threads and threading.get_ident() not in lookup_threads, lookup_threads
