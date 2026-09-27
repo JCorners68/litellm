@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
@@ -19,8 +20,6 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from types import TracebackType
 from typing import Final, Generic, Protocol, TypeVar
-
-from redis.exceptions import NoScriptError
 
 from litellm._logging import verbose_logger
 from litellm.caching.redis_cache import (
@@ -44,6 +43,7 @@ class _RedisPipeline(Protocol):
     def evalsha(self, sha: str, numkeys: int, *keys_and_args: _ScriptArg) -> object: ...
     def incrbyfloat(self, name: str, amount: float) -> object: ...
     def expire(self, name: str, time: timedelta) -> object: ...
+    def set(self, name: str, value: str, ex: timedelta | None = None) -> object: ...
     async def execute(self, raise_on_error: bool = True) -> list[object]: ...
 
 
@@ -73,7 +73,7 @@ class _Op(Generic[_T]):
         if failure is None:
             self.future.set_result(self.resolve(replies))
             return None
-        if isinstance(failure, NoScriptError):
+        if _is_missing_script(failure):
             return self._settle_alone()
         self.future.set_exception(failure)
         return None
@@ -83,6 +83,13 @@ class _Op(Generic[_T]):
             self.future.set_result(await self.run_alone())
         except Exception as e:  # noqa: BLE001  # the declaring caller owns the failure of its own operation
             self.future.set_exception(e)
+
+
+def _is_missing_script(failure: Exception) -> bool:
+    """Imported lazily: this module is reachable from a base ``import litellm`` while redis is not a base dependency."""
+    from redis.exceptions import NoScriptError
+
+    return isinstance(failure, NoScriptError)
 
 
 def _mark_retrieved(future: asyncio.Future[object]) -> None:
@@ -177,6 +184,34 @@ class _Increment(_Op[float]):
         return float(value)
 
 
+class _Set(_Op[None]):
+    """SET with the cache's TTL rules, same encoding as ``async_set_cache_pipeline_with_ttls``."""
+
+    __slots__ = ("_key", "_redis_cache", "_ttl", "_value")
+
+    def __init__(self, redis_cache: RedisCache, key: str, value: object, ttl: float | None) -> None:
+        super().__init__()
+        self._redis_cache: Final = redis_cache
+        self._key: Final = key
+        self._value: Final = value
+        self._ttl: Final = ttl
+
+    def enqueue(self, pipe: _RedisPipeline) -> int:
+        ttl: Final = self._redis_cache.get_ttl(ttl=self._ttl)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]  # untyped cache API
+        pipe.set(
+            self._redis_cache.check_and_fix_namespace(key=self._key),
+            json.dumps(self._value),
+            ex=None if ttl is None else timedelta(seconds=ttl),  # pyright: ignore[reportUnknownArgumentType]
+        )
+        return 1
+
+    def resolve(self, replies: Sequence[object]) -> None:
+        return None
+
+    async def run_alone(self) -> None:
+        await self._redis_cache.async_set_cache_pipeline_with_ttls([(self._key, self._value, self._ttl)])
+
+
 class BatchResult(Generic[_T]):
     """Awaitable handle for one declared operation; awaiting it flushes the batch it belongs to."""
 
@@ -220,6 +255,9 @@ class RedisBatch:
 
     def increment(self, key: str, value: float, ttl: int | None = None) -> BatchResult[float]:
         return self._declare(_Increment(self.redis_cache, key, value, ttl))
+
+    def set(self, key: str, value: object, ttl: float | None = None) -> BatchResult[None]:
+        return self._declare(_Set(self.redis_cache, key, value, ttl))
 
     def add_flush_hook(self, hook: Callable[[], None]) -> None:
         """Called at the start of every flush so lazily bound readers can declare their keys into the same trip."""
@@ -299,23 +337,39 @@ class RedisBatch:
             await asyncio.gather(*retries)
 
 
+def _backend_key(redis_cache: RedisCache) -> object:
+    """Two ``RedisCache`` instances built from the same connection settings talk to the same server, so the
+    proxy's cache and the router's cache share one pipeline (the router gets its port as a string, hence the
+    ``str`` comparison); a cache whose settings cannot be compared (a test double) gets its own."""
+    try:
+        settings: Final = tuple(sorted((str(k), str(v)) for k, v in redis_cache.redis_kwargs.items() if v is not None))  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType, reportUnknownArgumentType]  # untyped cache API
+    except AttributeError:
+        return ("instance", id(redis_cache))
+    return (type(redis_cache), settings)
+
+
 class RequestRedisBatches:
     """One ``RedisBatch`` per Redis backend for the current request, so readers of different caches that
-    share a server still share the pipeline when they share the ``RedisCache`` instance."""
+    share a server (the proxy's and the router's) share the pipeline."""
 
     __slots__ = ("_batches", "prefetched")
 
     def __init__(self) -> None:
-        self._batches: Final[dict[int, RedisBatch]] = {}  # mutable-ok: lazily filled per backend
+        self._batches: Final[dict[object, RedisBatch]] = {}  # mutable-ok: lazily filled per backend
         # Reads declared early for a consumer that runs later in the request, keyed by consumer name.
         self.prefetched: Final[dict[str, object]] = {}  # mutable-ok: armed pre-admission, taken at use
 
     def batch(self, redis_cache: RedisCache) -> RedisBatch:
-        batch = self._batches.get(id(redis_cache))
+        key: Final = _backend_key(redis_cache)
+        batch = self._batches.get(key)
         if batch is None:
             batch = RedisBatch(redis_cache, name="request_redis_batch")
-            self._batches[id(redis_cache)] = batch
+            self._batches[key] = batch
         return batch
+
+    async def flush_all(self) -> None:
+        """Send whatever is still declared (write-backs nobody awaits) before the request scope closes."""
+        await asyncio.gather(*(batch.flush() for batch in self._batches.values() if batch.pending))
 
     @property
     def batches(self) -> tuple[RedisBatch, ...]:

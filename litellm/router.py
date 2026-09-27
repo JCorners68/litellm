@@ -1722,16 +1722,19 @@ class Router:
         )
 
     def arm_routing_read_prefetch(self, model: str, request_kwargs: dict | None = None) -> None:
-        """Declare the cooldown and usage reads `async_get_available_deployment` will make for `model` on the
-        request's Redis batch, so admission's flush carries them. A miss (alias, no strategy, no batch) costs
-        nothing: routing then reads as it always has."""
+        """Declare the cooldown read (and, for usage-based routing, the usage read) that
+        `async_get_available_deployment` will make for `model` on the request's Redis batch, so admission's
+        flush carries it. A miss (alias, no batch) costs nothing: routing then reads as it always has."""
         try:
             strategy, selector = self._get_routing_context(model, request_kwargs)
-            if strategy != "usage-based-routing-v2" or not isinstance(selector, LowestTPMLoggingHandler_v2):
-                return
+            usage_selector: Final = (
+                selector
+                if strategy == "usage-based-routing-v2" and isinstance(selector, LowestTPMLoggingHandler_v2)
+                else None
+            )
             deployments: Final = self.get_model_list(model_name=model)
             if deployments:
-                RoutingPrefetch.arm(self, selector, deployments)
+                RoutingPrefetch.arm(self, usage_selector, deployments)
         except Exception as e:  # noqa: BLE001  # a prefetch is an optimisation, never a reason to fail the request
             verbose_router_logger.debug("routing read prefetch not armed for %s: %s", model, e)
 

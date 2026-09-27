@@ -1283,11 +1283,11 @@ class _PROXY_MaxParallelRequestsHandler_v3(CustomLogger):
         run: RegisteredScript,
         calls: Sequence[tuple[Sequence[str], Sequence[int]]],
     ) -> list[BatchResult[object] | None]:
-        """Declare one Lua call per group on the request's Redis batch, so all groups share one round trip.
-        Returns ``None`` per call when no batch is open (or there is a single call), and the caller runs the
-        script directly as before."""
+        """Declare one Lua call per group on the request's Redis batch, so all groups share one round trip
+        with whatever else the request declared (the routing read). Returns ``None`` per call when no batch
+        is open, and the caller runs the script directly as before."""
         redis_cache: Final = self.internal_usage_cache.dual_cache.redis_cache
-        batch: Final = None if redis_cache is None or len(calls) < 2 else active_request_redis_batch(redis_cache)
+        batch: Final = None if redis_cache is None else active_request_redis_batch(redis_cache)
         if batch is None:
             return [None] * len(calls)
         return [batch.script(source, run, keys, args) for keys, args in calls]

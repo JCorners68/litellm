@@ -54,6 +54,10 @@ class FakePipeline:
         self.commands.append(("EXPIRE", name, int(time.total_seconds())))
         return self
 
+    def set(self, name: str, value: str, ex: timedelta | None = None) -> FakePipeline:
+        self.commands.append(("SET", name, value, None if ex is None else int(ex.total_seconds())))
+        return self
+
     async def execute(self, raise_on_error: bool = True) -> list[Any]:
         assert raise_on_error is False
         self.executed = True
@@ -81,6 +85,7 @@ class FakeRedisCache(RedisCache):
         self.namespace = namespace
         self._circuit_breaker = RedisCircuitBreaker(failure_threshold=5, recovery_timeout=30)
         self.service_logger_obj = ServiceLogging()
+        self.default_ttl = None
         self.alone: list[tuple[str, Any]] = []
         self.store: dict[str, Any] = {}
 
@@ -112,6 +117,8 @@ def replies(command: tuple[Any, ...]) -> Any:
             return b"3.5"
         case "EXPIRE":
             return 1
+        case "SET":
+            return True
     raise AssertionError(command)
 
 

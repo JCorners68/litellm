@@ -280,8 +280,14 @@ async def _write_back(entries: Sequence[tuple[_CacheEntry, BaseModel]], cache: U
     memory: Final[_InMemoryCache] = cache.in_memory_cache
     for cache_key, payload, ttl in payloads:
         _set_in_memory(memory, cache_key, payload, cache.default_in_memory_ttl if ttl is None else ttl)
-    if cache.redis_cache is not None:
+    if cache.redis_cache is None:
+        return
+    batch: Final = active_request_redis_batch(cache.redis_cache)
+    if batch is None:
         await cache.redis_cache.async_set_cache_pipeline_with_ttls(payloads)
+        return
+    for cache_key, payload, ttl in payloads:  # rides the request's next round trip; the scope drains leftovers
+        batch.set(cache_key, payload, ttl)
 
 
 async def _fill_from_db(

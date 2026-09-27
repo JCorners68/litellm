@@ -44,21 +44,27 @@ class RoutingPrefetch:
     @staticmethod
     def arm(
         litellm_router_instance: LitellmRouter,
-        usage_selector: LowestTPMLoggingHandler_v2,
+        usage_selector: LowestTPMLoggingHandler_v2 | None,
         deployments: list,
     ) -> None:
         request: Final = active_request_redis_batches()
         redis_cache: Final = litellm_router_instance.cache.redis_cache
         if request is None or redis_cache is None or _PREFETCH_SLOT in request.prefetched:
             return
-        cooldown_keys: Final = [
+        keys: Final = [
             CooldownCache.get_cooldown_cache_key(model_id) for model_id in litellm_router_instance.get_model_ids()
         ]
-        tpm_keys, rpm_keys = usage_selector.usage_counter_keys(deployments)
-        keys: Final = [*cooldown_keys, *tpm_keys, *rpm_keys]
+        if usage_selector is not None:
+            tpm_keys, rpm_keys = usage_selector.usage_counter_keys(deployments)
+            keys.extend([*tpm_keys, *rpm_keys])
         request.prefetched[_PREFETCH_SLOT] = RoutingPrefetch(
             keys=frozenset(keys), result=request.batch(redis_cache).mget(keys)
         )
+
+    @staticmethod
+    def armed() -> bool:
+        request: Final = active_request_redis_batches()
+        return request is not None and _PREFETCH_SLOT in request.prefetched
 
     @staticmethod
     def take(needed: list[str]) -> "RoutingPrefetch | None":
@@ -73,15 +79,18 @@ class RoutingPrefetch:
 
 
 class RoutingReadBatch:
-    def __init__(self, usage_selector: LowestTPMLoggingHandler_v2) -> None:
+    def __init__(self, usage_selector: LowestTPMLoggingHandler_v2 | None) -> None:
         self.usage_selector: Final = usage_selector
         self.prefetched_usage: PrefetchedUsage | None = None
 
     @staticmethod
     def for_strategy(strategy: str | None, selector: object) -> "RoutingReadBatch | None":
+        """Usage-based routing reads its counters with the cooldown state; every other strategy reads only the
+        cooldown state, and only through this batch when the request armed a prefetch for it. Otherwise the
+        router's plain cooldown read stays in charge."""
         if strategy == "usage-based-routing-v2" and isinstance(selector, LowestTPMLoggingHandler_v2):
             return RoutingReadBatch(usage_selector=selector)
-        return None
+        return RoutingReadBatch(usage_selector=None) if RoutingPrefetch.armed() else None
 
     async def async_get_cooldown_deployments(
         self,
@@ -95,20 +104,24 @@ class RoutingReadBatch:
         """
         model_ids: Final = litellm_router_instance.get_model_ids()
         cooldown_keys: Final = [CooldownCache.get_cooldown_cache_key(model_id) for model_id in model_ids]
-        tpm_keys, rpm_keys = self.usage_selector.usage_counter_keys(healthy_deployments)
-        usage_keys: Final = tpm_keys + rpm_keys
-
-        reads: Final = [
-            (litellm_router_instance.cooldown_cache.cooldown_store, cooldown_keys),
-            (self.usage_selector.router_cache, usage_keys),
+        reads: Final[list[tuple[DualCache, list[str]]]] = [
+            (litellm_router_instance.cooldown_cache.cooldown_store, cooldown_keys)
         ]
-        cooldown_results, usage_values = await self._read_prefetched(
-            reads
-        ) or await DualCache.async_batch_get_cache_shared(reads, parent_otel_span=parent_otel_span)
-        self.prefetched_usage = PrefetchedUsage(
-            keys=frozenset(usage_keys),
-            values=None if usage_values is None else dict(zip(usage_keys, usage_values)),
+        usage_keys: list[str] = []
+        if self.usage_selector is not None:
+            tpm_keys, rpm_keys = self.usage_selector.usage_counter_keys(healthy_deployments)
+            usage_keys = tpm_keys + rpm_keys
+            reads.append((self.usage_selector.router_cache, usage_keys))
+        results: Final = await self._read_prefetched(reads) or await DualCache.async_batch_get_cache_shared(
+            reads, parent_otel_span=parent_otel_span
         )
+        cooldown_results: Final = results[0]
+        if self.usage_selector is not None:
+            usage_values: Final = results[1]
+            self.prefetched_usage = PrefetchedUsage(
+                keys=frozenset(usage_keys),
+                values=None if usage_values is None else dict(zip(usage_keys, usage_values)),
+            )
 
         cooldown_models: Final = litellm_router_instance.cooldown_cache.active_cooldowns_from_results(
             model_ids, cooldown_results

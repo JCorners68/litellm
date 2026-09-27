@@ -18,5 +18,8 @@ class RedisRequestBatchMiddleware:
         if scope["type"] not in _REQUEST_SCOPES:
             await self.app(scope, receive, send)
             return
-        with request_redis_batch_scope():
-            await self.app(scope, receive, send)
+        with request_redis_batch_scope() as batches:
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                await batches.flush_all()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,9 @@ import pytest
 from litellm import Router
 from litellm.caching.dual_cache import DualCache
 from litellm.caching.redis_batch import active_request_redis_batches, request_redis_batch_scope
+from litellm.proxy._types import LiteLLM_UserTable
+from litellm.proxy.auth.auth_object_prefetch import _CacheEntry, _write_back
+from litellm.proxy.common_utils.user_api_key_cache import UserApiKeyCache
 from litellm.proxy.hooks.parallel_request_limiter_v3 import (
     CHECK_AND_INCREMENT_BY_N_SCRIPT,
     _PROXY_MaxParallelRequestsHandler_v3,
@@ -49,6 +53,8 @@ def _lua_ok_replies(command: tuple[Any, ...]) -> Any:
         return [0, 1, 1700000000]  # OK: one counter, new_counter=1, window_start
     if command[0] == "MGET":
         return [None for _ in command[1:]]
+    if command[0] == "SET":
+        return True
     raise AssertionError(command)
 
 
@@ -145,8 +151,8 @@ def _deployment(deployment_id: str) -> dict:
     }
 
 
-def _router(redis_cache: FakeRedisCache) -> Router:
-    router = Router(model_list=[_deployment("dep-a"), _deployment("dep-b")], routing_strategy="usage-based-routing-v2")
+def _router(redis_cache: FakeRedisCache, routing_strategy: str = "usage-based-routing-v2") -> Router:
+    router = Router(model_list=[_deployment("dep-a"), _deployment("dep-b")], routing_strategy=routing_strategy)
     router._update_redis_cache(cache=redis_cache)
     return router
 
@@ -215,17 +221,47 @@ async def test_a_failed_prefetch_falls_back_to_the_shared_read():
 
 
 @pytest.mark.asyncio
-async def test_arming_is_a_no_op_for_a_strategy_without_usage_reads_and_outside_a_scope():
+async def test_arming_outside_a_request_scope_is_a_no_op():
     redis_cache = FakeRedisCache(FakeClient(_lua_ok_replies))
     router = _router(redis_cache)
     router.arm_routing_read_prefetch(_MODEL_GROUP, {})
     assert active_request_redis_batches() is None
 
+
+@pytest.mark.asyncio
+async def test_simple_shuffle_prefetches_only_its_cooldown_read_into_the_admission_pipeline():
+    client = FakeClient(_lua_ok_replies)
+    redis_cache = FakeRedisCache(client)
+    router = _router(redis_cache, routing_strategy="simple-shuffle")
+    limiter = _limiter(redis_cache)
+
+    with request_redis_batch_scope():
+        router.arm_routing_read_prefetch(_MODEL_GROUP, {})
+        await limiter.atomic_check_and_increment_by_n(
+            descriptors=[_descriptor("api_key", "k1", 10)],  # type: ignore[arg-type]
+            increments=[{"requests": 1}],
+        )
+        deployment = await router.async_get_available_deployment(
+            model=_MODEL_GROUP, messages=[{"role": "user", "content": "ping"}], request_kwargs={}
+        )
+
+    assert deployment["model_info"]["id"] in {"dep-a", "dep-b"}
+    assert len(client.pipelines) == 1
+    commands = client.pipelines[0].commands
+    assert [c[0] for c in commands] == ["MGET", "EVALSHA"]
+    assert set(commands[0][1:]) == {
+        CooldownCache.get_cooldown_cache_key("dep-a"),
+        CooldownCache.get_cooldown_cache_key("dep-b"),
+    }
+    assert redis_cache.alone == []
+
     shuffle = Router(model_list=[_deployment("dep-a")], routing_strategy="simple-shuffle")
     shuffle._update_redis_cache(cache=redis_cache)
     with request_redis_batch_scope() as request:
         shuffle.arm_routing_read_prefetch(_MODEL_GROUP, {})
-        assert request.prefetched == {}
+        armed = request.prefetched["routing_read"]
+        assert isinstance(armed, RoutingPrefetch)
+        assert armed.keys == {CooldownCache.get_cooldown_cache_key("dep-a")}  # no usage counters for shuffle
 
 
 @pytest.mark.asyncio
@@ -237,3 +273,87 @@ async def test_two_backends_flush_concurrently_one_pipeline_each():
         rb = request.batch(b).mget(["x"])
         await asyncio.gather(ra, rb)
     assert len(a_client.pipelines) == 1 and len(b_client.pipelines) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_single_lua_group_rides_the_pipeline_with_the_armed_routing_read():
+    client = FakeClient(_lua_ok_replies)
+    redis_cache = FakeRedisCache(client)
+    router = _router(redis_cache)
+    limiter = _limiter(redis_cache)
+
+    with request_redis_batch_scope():
+        router.arm_routing_read_prefetch(_MODEL_GROUP, {})
+        await limiter.atomic_check_and_increment_by_n(
+            descriptors=[_descriptor("api_key", "k1", 10)],  # type: ignore[arg-type]
+            increments=[{"requests": 1}],
+        )
+        await router.async_get_available_deployment(
+            model=_MODEL_GROUP, messages=[{"role": "user", "content": "ping"}], request_kwargs={}
+        )
+
+    assert len(client.pipelines) == 1
+    assert [c[0] for c in client.pipelines[0].commands] == ["MGET", "EVALSHA"]
+    assert redis_cache.alone == []
+
+
+class _SameServerCache(FakeRedisCache):
+    def __init__(self, client: FakeClient, **redis_kwargs: object) -> None:
+        super().__init__(client)
+        self.redis_kwargs = redis_kwargs
+
+
+@pytest.mark.asyncio
+async def test_caches_built_from_the_same_connection_settings_share_the_request_pipeline():
+    client = FakeClient(_lua_ok_replies)
+    proxy_cache = _SameServerCache(client, host="r", port=6379, db=0)
+    router_cache = _SameServerCache(FakeClient(_lua_ok_replies), port="6379", host="r", db=0, password=None)
+    other_cache = _SameServerCache(FakeClient(_lua_ok_replies), host="r", port=6380, db=0)
+    with request_redis_batch_scope() as request:
+        assert request.batch(proxy_cache) is request.batch(router_cache)
+        assert request.batch(proxy_cache) is not request.batch(other_cache)
+        a = request.batch(proxy_cache).mget(["a"])
+        b = request.batch(router_cache).mget(["b"])
+        await asyncio.gather(a, b)
+    assert len(client.pipelines) == 1
+    assert [c[0] for c in client.pipelines[0].commands] == ["MGET", "MGET"]
+
+
+def _user_entry() -> tuple[_CacheEntry, LiteLLM_UserTable]:
+    entry = _CacheEntry("user-1", "user_row", LiteLLM_UserTable, 42)
+    return entry, LiteLLM_UserTable(user_id="user-1", max_budget=None, spend=0.0)
+
+
+@pytest.mark.asyncio
+async def test_auth_write_back_rides_the_next_round_trip_and_the_scope_drains_what_nobody_awaited():
+    client = FakeClient(_lua_ok_replies)
+    redis_cache = FakeRedisCache(client)
+    cache = UserApiKeyCache(redis_cache=redis_cache)
+    with request_redis_batch_scope() as request:
+        await _write_back([_user_entry()], cache)
+        assert client.pipelines == []  # not sent yet: the SET waits for the next round trip
+        await request.batch(redis_cache).mget(["spend:key:k1"])
+        assert len(client.pipelines) == 1
+        kinds = [c[0] for c in client.pipelines[0].commands]
+        assert kinds == ["MGET", "SET"] or kinds == ["SET", "MGET"]
+        set_command = next(c for c in client.pipelines[0].commands if c[0] == "SET")
+        assert set_command[1] == "user-1" and set_command[3] == 42
+        assert json.loads(set_command[2])["user_id"] == "user-1"
+        assert cache.in_memory_cache.get_cache("user-1") is not None
+
+        await _write_back([_user_entry()], cache)
+        assert len(client.pipelines) == 1
+        await request.flush_all()
+    assert len(client.pipelines) == 2
+    assert [c[0] for c in client.pipelines[1].commands] == ["SET"]
+
+
+@pytest.mark.asyncio
+async def test_auth_write_back_outside_a_scope_writes_through_as_before():
+    redis_cache = FakeRedisCache(FakeClient(_lua_ok_replies))
+    redis_cache.async_set_cache_pipeline_with_ttls = AsyncMock()  # type: ignore[method-assign]
+    cache = UserApiKeyCache(redis_cache=redis_cache)
+    await _write_back([_user_entry()], cache)
+    redis_cache.async_set_cache_pipeline_with_ttls.assert_awaited_once()
+    (payloads,), _ = redis_cache.async_set_cache_pipeline_with_ttls.await_args
+    assert [(key, ttl) for key, _value, ttl in payloads] == [("user-1", 42)]
