@@ -26,6 +26,8 @@ from e2e_http import (
 )
 from e2e_metadata import STEP_FRAMES, step
 from models import (
+    AuditLogPage,
+    AuditLogParams,
     ChatBody,
     ChatMessage,
     ConnectionTestBody,
@@ -36,6 +38,7 @@ from models import (
     CustomerResponse,
     KeyBlockBody,
     KeyDeleteBody,
+    KeyDeleteByAliasBody,
     KeyGenerateBody,
     KeyGenerateResponse,
     KeyInfoParams,
@@ -163,6 +166,33 @@ class ManagementClient:
     @step("update virtual key's allowed models")
     def update_key_models(self, key: str, models: list[str]) -> None:
         _ = unwrap(self.update_key(KeyUpdateBody(key=key, models=models)))
+
+    @step("delete virtual key by alias")
+    def delete_key_by_alias(self, key_alias: str) -> None:
+        _ = unwrap(
+            self.proxy.transport.post(
+                "/key/delete",
+                headers=self.proxy.management_headers(),
+                json=KeyDeleteByAliasBody(key_aliases=[key_alias]),
+                response_type=NoBody,
+            )
+        )
+
+    @step("read /audit")
+    def key_deleted_audit_logs(self, token_hash: str) -> AuditLogPage:
+        return unwrap(
+            self.proxy.transport.get(
+                "/audit",
+                headers=self.proxy.management_headers(),
+                params=AuditLogParams(
+                    object_id=token_hash,
+                    action="deleted",
+                    table_name="LiteLLM_VerificationToken",
+                    page_size=100,
+                ),
+                response_type=AuditLogPage,
+            )
+        )
 
     @step("read /key/info")
     def key_info_as(self, key: str, *, caller_key: str | None = None) -> Result[KeyInfoResponse]:

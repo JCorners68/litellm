@@ -147,6 +147,29 @@ class LangfuseObservationList(BaseModel):
     data: list[LangfuseObservation] = []
 
 
+class LangfuseOtelMetadata(BaseModel):
+    """Langfuse stores every OTel span attribute under metadata.attributes."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attributes: dict[str, str] = {}
+
+
+def otel_attributes(obs: LangfuseObservation) -> dict[str, str]:
+    try:
+        return LangfuseOtelMetadata.model_validate(obs.metadata).attributes
+    except ValidationError:
+        return {}
+
+
+def is_otel_v2_generation(obs: LangfuseObservation, *, key_alias: str) -> bool:
+    attributes = otel_attributes(obs)
+    return (
+        attributes.get("langfuse.observation.type") == "generation"
+        and attributes.get("litellm.metadata.user_api_key_alias") == key_alias
+    )
+
+
 class LangfuseListParams(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -652,6 +675,19 @@ class LoggingClient:
                     return last
             time.sleep(POLL_INTERVAL)
         return last
+
+    @step("poll Langfuse for the key's generation")
+    def poll_langfuse_generation(
+        self, creds: LangfuseCreds, *, key_alias: str, from_start_time: str
+    ) -> LangfuseObservation | None:
+        """The OTel v2 generation the proxy exported for one key alias since from_start_time."""
+        deadline = time.monotonic() + POLL_TIMEOUT
+        while time.monotonic() < deadline:
+            for obs in self.list_langfuse_observations(creds, from_start_time=from_start_time):
+                if is_otel_v2_generation(obs, key_alias=key_alias):
+                    return obs
+            time.sleep(POLL_INTERVAL)
+        return None
 
     @step("poll Langfuse for the run's trace")
     def poll_langfuse_trace_observations(
